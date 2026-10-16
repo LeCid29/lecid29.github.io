@@ -484,13 +484,19 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     var F = fitCounts(fRows, teams, 0.15, refDate);
     var Y = fitCounts(yRows, teams, 0.22, refDate);
 
-    function countBlock(model, rows, h, a, step) {
+    // opt : shrink = part de l'écart à la moyenne du championnat conservée, kmul = dispersion (k plus petit = plus d'incertitude),
+    // over / under = lignes affichées, en pas (step) autour de la ligne centrale (moyenne arrondie - 0,5)
+    function countBlock(model, rows, h, a, step, opt) {
       if (!model) return null;
-      var e = model.expect(h, a), m = e[0] + e[1];
-      var lines = linesAround(model.leagueMean, step);
+      opt = opt || {};
+      var e = model.expect(h, a), m0 = e[0] + e[1], lm = model.leagueMean;
+      var sh = opt.shrink == null ? 1 : opt.shrink, m = lm + sh * (m0 - lm), f = m0 > 0 ? m / m0 : 1, k = model.k * (opt.kmul || 1);
+      var base = Math.round(lm) - 0.5;
+      var lines = opt.over ? opt.over.map(function (o) { return base + o * step; }) : linesAround(lm, step);
+      function ln(L) { var o = nbOver(m, k, L); return { line: L, over: o, under: 1 - o }; }
       return {
-        home: e[0], away: e[1], total: m, leagueMean: model.leagueMean,
-        lines: lines.map(function (L) { var o = nbOver(m, model.k, L); return { line: L, over: o, under: 1 - o }; }),
+        home: e[0] * f, away: e[1] * f, total: m, leagueMean: lm,
+        lines: lines.map(ln), under: (opt.under || []).map(function (u) { return ln(base + u * step); }),
         sample: Math.min(teamCount(rows, h), teamCount(rows, a))
       };
     }
@@ -506,8 +512,10 @@ details p { margin: 8px 0 0; max-width: 64ch; }
         mk.dc1n = mk.p1 + mk.pn; mk.dc12 = mk.p1 + mk.p2; mk.dcn2 = mk.pn + mk.p2;
         return {
           goals: mk,
-          corners: countBlock(C, cRows, h, a, 1),
-          cards: countBlock(Y, yRows, h, a, 1),
+          // corners : écart à la moyenne réduit de 60 % et dispersion élargie (test à l'aveugle 2024-25 et 2025-26 :
+          // sans cela le modèle annonçait 76 % là où 66 % passaient) ; cartons : modèle déjà juste, inchangé
+          corners: countBlock(C, cRows, h, a, 1, { shrink: 0.4, kmul: 0.7, over: [-3, -2, -1, 0, 1], under: [3] }),
+          cards: countBlock(Y, yRows, h, a, 1, { over: [-1, 0, 1], under: [2] }),
           fouls: countBlock(F, fRows, h, a, 2),
           formHome: form(doc.results, h, 5),
           formAway: form(doc.results, a, 5),
@@ -1153,6 +1161,31 @@ details p { margin: 8px 0 0; max-width: 64ch; }
   }
 
   // ---------- construction des matchs ----------
+
+  // ---------- les plus sûrs (5 grands championnats) ----------
+  // Taux de réussite réels mesurés à l'aveugle sur 2024-25 et 2025-26 (3 485 matchs) quand le modèle annonçait 85 % ou plus :
+  // [réussite en %, nombre de cas]. Seuls les pronostics qui ont dépassé 85 % de réussite réelle sont proposés.
+  var SAFE_TH = 0.85;
+  var SAFE_RATE = { favN: [91.5, 508], d12: [90.9, 99], u45: [89.3, 1842], cornO: [89.0, 1244], cardU: [86.7, 588], cardO: [85.6, 118], o15: [85.0, 234] };
+  function frNum(x) { return String(x).replace(".", ","); }
+  function safePicks(g, pred, H, A) {
+    var s = [];
+    function add(id, label, p, r, mk) { if (p >= SAFE_TH) s.push({ id: id, label: label, p: p, rate: r[0] / 100, n: r[1], mk: mk || null }); }
+    var fav1 = g.p1 >= g.p2;
+    add("favN", (fav1 ? H : A) + " ou nul", fav1 ? g.dc1n : g.dcn2, SAFE_RATE.favN, fav1 ? "1N" : "N2");
+    add("12", "Pas de match nul", g.dc12, SAFE_RATE.d12, "12");
+    var X = PM.scoreMatrix(g.xgHome, g.xgAway), u45 = 0;
+    for (var x = 0; x <= 4; x++) for (var y = 0; y <= 4 - x; y++) u45 += X[x][y];
+    add("u45", "Moins de 4,5 buts", u45, SAFE_RATE.u45);
+    add("o15", "Plus de 1,5 but", g.o15, SAFE_RATE.o15, "o15");
+    var c = pred.corners, y = pred.cards;
+    if (c && c.sample >= 3 && c.lines.length) add("cornO", "Plus de " + frNum(c.lines[0].line) + " corners", c.lines[0].over, SAFE_RATE.cornO);
+    if (y && y.sample >= 3 && y.lines.length) add("cardO", "Plus de " + frNum(y.lines[0].line) + " cartons jaunes", y.lines[0].over, SAFE_RATE.cardO);
+    if (y && y.sample >= 3 && y.under && y.under.length) add("cardU", "Moins de " + frNum(y.under[0].line) + " cartons jaunes", y.under[0].under, SAFE_RATE.cardU);
+    s.sort(function (a, b) { return b.rate - a.rate || b.p - a.p; });
+    return s;
+  }
+
   function buildMatches(docs, nowMs, opts) {
     opts = opts || {};
     var horizon = nowMs + (opts.days || 10) * 864e5, from = nowMs - 3 * 3600e3;
@@ -1172,7 +1205,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
         out.push({
           fid: f.id || "", xb: f.xb || null, key: code + ":" + f.h + "-" + f.a + ":" + f.t, comp: code, sport: "foot", t: f.t, h: f.h, a: f.a, hn: H, an: A,
           p1: g.p1, pn: g.pn, p2: g.p2, goals: g, markets: S.footballMarkets(g, H, A), main: S.mainPick(g.p1, g.pn, g.p2, H, A),
-          corners: pred.corners, cards: pred.cards, fouls: pred.fouls, form: { h: formOf(doc.results, f.h, 5), a: formOf(doc.results, f.a, 5) },
+          corners: pred.corners, cards: pred.cards, fouls: pred.fouls, safe: safePicks(g, pred, H, A), form: { h: formOf(doc.results, f.h, 5), a: formOf(doc.results, f.a, 5) },
           stake: (note && note.enjeu) || S.stakeLeague(tab, f.h, f.a, H, A, code), note: note, sr: sr, div: div,
           source: "notre modèle", reliab: div == null ? "moyenne" : div < 0.1 ? "bonne" : div < 0.15 ? "moyenne" : "à surveiller",
           expected: { h: g.xgHome, a: g.xgAway, unit: "buts attendus" }, avg: { h: teamAvg(doc.results, f.h), a: teamAvg(doc.results, f.a) }
@@ -2003,9 +2036,10 @@ details p { margin: 8px 0 0; max-width: 64ch; }
   }
   function footer() {
     return '<div class="foot"><details><summary>Comment sont calculés les pronostics</summary>' +
-      "<p><b>Football Big 5</b> : notre modèle note l'attaque et la défense de chaque équipe à partir des résultats de la saison (en partant du niveau 2025-26), puis calcule les buts attendus et la probabilité de chaque score. Corners, cartons et fautes viennent des statistiques des derniers matchs. L'avis de Sportradar sert de contrôle. Les probabilités de buts (plus/moins, les deux équipes marquent) sont recalées sur les résultats réels de 2024-25 et 2025-26, où le modèle s'était montré trop sûr de lui.</p>" +
+      "<p><b>Football Big 5</b> : notre modèle note l'attaque et la défense de chaque équipe à partir des résultats de la saison (en partant du niveau 2025-26), puis calcule les buts attendus et la probabilité de chaque score. Corners, cartons et fautes viennent des statistiques des derniers matchs ; pour les corners, l'écart d'une équipe à la moyenne du championnat est réduit de 60 %, car sur 2024-25 et 2025-26 le modèle s'y montrait trop sûr de lui (76 % annoncés là où 66 % passaient). L'avis de Sportradar sert de contrôle. Les probabilités de buts (plus/moins, les deux équipes marquent) sont recalées sur les résultats réels de 2024-25 et 2025-26, où le modèle s'était montré trop sûr de lui.</p>" +
       "<p><b>Ligue des champions et MLS</b> : on part des probabilités 1N2 de Sportradar et on en déduit les buts attendus, donc les marchés de buts et les scores. <b>NBA, NHL, MLB</b> : probabilité de victoire Sportradar, puis totaux et handicaps estimés à partir des scores de la saison (moyenne de la ligue tant que l'échantillon est court). En NHL, la fin de match (prolongation, but dans la cage vide, égalisation gardien retiré) est calée sur 447 matchs de la saison 2025-26. <b>Tennis</b> : classement Elo par surface de Tennis Abstract.</p>" +
       "<p><b>Forme et enjeu</b> : la forme vient des 5 derniers résultats, l'enjeu du classement (titre, Europe, maintien, play-offs, séries). Pour les grands matchs, Claude ajoute des infos d'avant-match (blessés, suspendus, joueurs en forme) trouvées dans la presse ; une absence majeure confirmée ajuste légèrement les buts attendus.</p>" +
+      "<p><b>Les plus sûrs</b> (fiche d'un match des 5 grands championnats) : les pronostics que le modèle donne à 85 % ou plus, parmi ceux qui ont réellement réussi plus de 85 % du temps dans ce cas sur 2024-25 et 2025-26 (3 485 matchs testés à l'aveugle) : favori ou nul 91,5 %, pas de match nul 90,9 %, moins de 4,5 buts 89,3 %, plus de 6,5 corners (ou la ligne équivalente du championnat) 89 %, moins de 5,5 cartons jaunes 86,7 %, plus de 2,5 cartons 85,6 %, plus de 1,5 but 85 %. La victoire sèche, plus/moins de 2,5 buts et « les deux équipes marquent » n'y figurent pas : le modèle les annonce rarement à 85 % et, dans ces cas, ils n'ont pas dépassé 80 % de réussite.</p>" +
       "<p><b>Combinés</b> : une sélection par match, parmi les plus probables (62 à 90 %), assemblées pour viser une cote de 1,5 ou de 2. La probabilité du combiné est le produit des probabilités des sélections.</p>" +
       "<p><b>Cotes 1xBet</b> : relevées automatiquement chaque matin et à chaque « Mettre à jour » (The Odds API) pour les matchs des 30 heures suivantes : 1N2, total de buts ou de points sur la ligne principale, handicaps MLB et NBA. Les cotes marquées ≈ sont recalculées (double chance à partir du 1N2 ; en NHL, 1xBet cote le 1N2 en 60 minutes, la victoire prolongation comprise en est déduite). Corners, cartons, « les deux équipes marquent » et lignes secondaires (par exemple +1,5 pour le favori, moins de 7,5 buts) n'ont pas de cote automatique" + (WEB ? "." : " : tu peux les saisir dans la fiche du match.") + " Les combinés sont construits en priorité avec des sélections cotées par 1xBet et visent 1,5 ou 2 à la cote 1xBet ; ils ne reprennent les autres marchés que si les matchs cotés ne suffisent pas. Une cote est « intéressante » quand probabilité × cote 1xBet dépasse 1,05 et que le modèle ne s'écarte pas de plus de 10 points de 1xBet : sur les matchs de foot du 17-18 octobre, 1xBet et Sportradar concordaient à 1 point près, notre modèle s'en écartait de 6 points en moyenne, jusqu'à 20 points.</p>" +
       "<p><b>Testé sur deux saisons</b> : la méthode a été rejouée jour par jour sur 2024-25 et 2025-26 (5 grands championnats), avec à chaque date les seuls résultats déjà connus. Combinés à 1,5 : 67,5 % gagnés sur 453 (le modèle annonçait 67 %). Combinés à 2 : 56 % gagnés sur 381 (annoncé 50 %). À la cote juste, c'est à peu près à l'équilibre ; avec la marge habituelle d'un bookmaker (environ 5 % de moins par sélection), on perd de 4 à 9 % des mises sur la durée. Jusqu'à 10 combinés perdus d'affilée sont arrivés.</p>" +
@@ -2038,7 +2072,8 @@ details p { margin: 8px 0 0; max-width: 64ch; }
   function countCard(title, icon, blk, n, unit) {
     if (!blk) return "";
     return '<section class="card"><h3>' + icon + esc(title) + '</h3><div class="split"><div><div class="val">' + dec(blk.home) + '</div><div class="side">' + esc(n[0]) + '</div></div><div class="tot"><div class="val">' + dec(blk.total) + '</div><div class="side">total attendu</div></div><div><div class="val">' + dec(blk.away) + '</div><div class="side">' + esc(n[1]) + '</div></div></div><div class="rows">' +
-      blk.lines.map(function (l) { return rowP("Plus de " + dec(l.line) + " " + unit, l.over); }).join("") + '</div><p class="note">Moyenne du championnat : ' + dec(blk.leagueMean) + " par match, sur " + blk.sample + " match" + (blk.sample > 1 ? "s" : "") + " de statistiques par équipe au minimum.</p></section>";
+      blk.lines.map(function (l) { return rowP("Plus de " + dec(l.line) + " " + unit, l.over); }).join("") +
+      (blk.under || []).map(function (l) { return rowP("Moins de " + dec(l.line) + " " + unit, l.under); }).join("") + '</div><p class="note">Moyenne du championnat : ' + dec(blk.leagueMean) + " par match, sur " + blk.sample + " match" + (blk.sample > 1 ? "s" : "") + " de statistiques par équipe au minimum.</p></section>";
   }
   function formLine(name, f) {
     var p = f.slice().reverse().map(function (x) { return '<span class="pill ' + x.res + '" title="' + esc((x.home ? "Dom. " : "Ext. ") + x.gf + "-" + x.ga) + '">' + x.res + "</span>"; }).join("");
@@ -2052,6 +2087,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     h += '<section class="card mainpick"><span class="code">' + esc(m.main.code) + '</span><div><div class="lbl">' + esc(m.main.label) + '</div><div class="sub">Pronostic principal · fiabilité ' + esc(m.reliab) + '</div></div><div class="big">' + pct(m.main.p) + "<small>cote juste " + odds(m.main.p) + "</small></div></section>";
     if (m.xbAt) h += '<p class="note" style="margin:0">Cotes 1xBet relevées le ' + fUpd.format(new Date(m.xbAt)) + " (affichées sous chaque pronostic).</p>";
     h += '<div style="display:flex;flex-wrap:wrap;gap:8px">' + (WEB ? "" : '<button class="xbtoggle" id="xbtoggle" type="button">' + (state.sheetXb ? "Masquer la saisie des cotes 1xBet" : m.xbAt ? "Saisir une cote 1xBet manquante" : "Saisir les cotes 1xBet") + "</button>") + '<button class="xbtoggle" id="tgtoggle" type="button">' + (state.sheetTg ? "Masquer « Copier pour la feuille »" : "📋 Copier pour la feuille Telegram") + "</button></div>" + (state.oddsErr ? '<p class="xberr">' + esc(state.oddsErr) + "</p>" : "");
+    if (m.safe) h += safeCard(m);
     if (m.stake) h += '<section class="card"><h3>Enjeu</h3><p>' + esc(m.stake) + "</p></section>";
     if (m.note) {
       h += '<section class="card notebox"><h3>Infos d\'avant-match</h3>' + (m.note.txt ? "<p>" + esc(m.note.txt) + "</p>" : "") +
@@ -2081,6 +2117,20 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     }
     h += '<p class="note">Base du calcul : ' + esc(m.source) + ".</p>";
     return h;
+  }
+  // pronostics à 85 % ou plus, avec leur réussite réelle mesurée sur 2024-25 et 2025-26 (5 grands championnats)
+  function safeCard(m) {
+    var head = '<section class="card safecard"><h3>Les plus sûrs pour ce match</h3>';
+    if (!m.safe.length) return head + '<p class="note">Aucun pronostic à 85 % ou plus pour ce match.</p></section>';
+    head += '<p class="note" style="margin:0 0 4px">Pronostics à 85 % ou plus pour ce match, avec leur réussite réelle dans ce cas sur 2024-25 et 2025-26 (5 grands championnats).</p>';
+    return head + '<div class="rows">' + m.safe.map(function (s) {
+      var mk = s.mk ? m.markets.filter(function (x) { return x.id === s.mk; })[0] : null, au = mk ? autoOf(mk) : null;
+      var minC = Math.ceil(100 / s.rate) / 100;
+      var why = "A réussi " + pct(s.rate) + " sur " + s.n + " matchs testés · rentable dès une cote de " + dec(minC, 2);
+      var xb = '<p class="note" style="margin:2px 0 0">' + why + "</p>" + (au ? autoLine(s.p, au) : "");
+      if (state.sheetTg) xb += tgButtons(tgPayload(m.comp, m.t, m.hn, m.an, s.label, au, why, m.tn));
+      return rowP(s.label, s.p, xb);
+    }).join("") + "</div></section>";
   }
   function openSheet(key, silent) {
     var c = compute(), m = c.byKey[key];
