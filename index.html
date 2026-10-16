@@ -130,6 +130,12 @@ main { padding-block: 14px 40px; display: grid; gap: 16px; }
 .why { font-size: 13.5px; color: var(--muted); max-width: 64ch; }
 .why b { color: var(--ink); font-weight: 600; }
 .open-link { justify-self: start; border: 0; background: none; padding: 0; color: var(--pitch); font-weight: 600; font-size: 13.5px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.leghist { font-size: 12.5px; color: var(--muted); margin: 0; }
+.leghist b { color: var(--ink); font-weight: 600; }
+details.analysis { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 10px 14px; font-size: 13.5px; }
+.analysis summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+.analysis ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; color: var(--muted); }
+.analysis li b { color: var(--ink); font-weight: 600; }
 .combo-foot { padding: 10px 14px 14px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
 
 /* Bilan et historique */
@@ -1811,6 +1817,54 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       bar(m) + footLine(m) + "</button>";
   }
 
+  // ---------- analyse des combinés ----------
+  // Réussite réelle des sélections de football (5 grands championnats), testées à l'aveugle sur 2024-25 et 2025-26,
+  // par type de sélection et par tranche de probabilité annoncée : [réussite en %, nombre de cas]
+  var LEG_HIST = { d120: [70.9, 492], d121: [74.3, 2619], d122: [83.8, 345], dcx0: [66.2, 1270], dcx1: [75.8, 1463], dcx2: [85.5, 937], dcx3: [93.8, 177],
+    o150: [72.9, 756], o151: [76.8, 1677], o152: [83.9, 783], o153: [88.5, 52], o250: [60.6, 554], o251: [71.8, 142], res0: [67.4, 319], res1: [79.5, 176], res2: [81.6, 49],
+    u250: [53.9, 165], u350: [71.3, 1090], u351: [76.3, 918], u352: [80.9, 152] };
+  var LEG_TYPE = { "1": ["res", "les victoires"], "2": ["res", "les victoires"], "1N": ["dcx", "les doubles chances « équipe ou nul »"], "N2": ["dcx", "les doubles chances « équipe ou nul »"],
+    "12": ["d12", "les « pas de match nul »"], o15: ["o15", "les « plus de 1,5 but »"], o25: ["o25", "les « plus de 2,5 buts »"], u25: ["u25", "les « moins de 2,5 buts »"], u35: ["u35", "les « moins de 3,5 buts »"] };
+  var BAND_TXT = ["entre 62 et 70 %", "entre 70 et 80 %", "entre 80 et 90 %", "à plus de 90 %"];
+  // historique des combinés construits de la même façon (football, 5 grands championnats, 2024-25 et 2025-26)
+  var COMBO_HIST = { 1.5: { won: 306, n: 453, ann: 66.8, streak: 10 }, 2: { won: 214, n: 381, ann: 50.4, streak: 7 } };
+  function histLine(comp, id, p) {
+    if (E.BIG5.indexOf(comp) < 0) return "";
+    var t = LEG_TYPE[id]; if (!t) return "";
+    var b = p >= 0.9 ? 3 : p >= 0.8 ? 2 : p >= 0.7 ? 1 : p >= 0.62 ? 0 : -1, h = b >= 0 ? LEG_HIST[t[0] + b] : null;
+    if (!h) return "";
+    return '<p class="leghist">📈 Historique : sur 2024-25 et 2025-26, ' + t[1] + " annoncé" + (t[0] === "res" || t[0] === "dcx" ? "e" : "") + "s " + BAND_TXT[b] + " ont passé <b>" + dec(h[0], 1) + " %</b> du temps (" + h[1] + " cas).</p>";
+  }
+  function lossFreq(q) { return q >= 0.3 ? freq(q) : "1 fois sur " + Math.max(2, Math.round(1 / q)); }
+  // legs : [{ label, p, r? }] (r = « won » si la sélection est déjà gagnée) ; target : 1.5 ou 2 ; xo : cote 1xBet du combiné ou null
+  function comboAnalysis(legs, prob, target, xo, isLive, allBig5) {
+    var items = [];
+    items.push(legs.length > 1
+      ? "<b>Probabilité que tout passe</b> : " + legs.map(function (l) { return pct(l.p); }).join(" × ") + " = <b>" + pct(prob) + "</b>. Les sélections viennent de matchs différents, leurs chances se multiplient."
+      : "<b>Une seule sélection</b> : la plus probable de celles qui approchaient la cote visée ; sa probabilité est celle du combiné (" + pct(prob) + ").");
+    var done = legs.filter(function (l) { return l.r === "won"; }), rest = legs.filter(function (l) { return l.r !== "won"; });
+    if (done.length && rest.length) {
+      var pr = rest.reduce(function (a, l) { return a * l.p; }, 1);
+      items.push("<b>Où on en est</b> : " + done.map(function (l) { return "« " + esc(l.label) + " »"; }).join(", ") + (done.length > 1 ? " sont déjà passées" : " est déjà passée") + ". Il reste " + rest.map(function (l) { return "« " + esc(l.label) + " » (" + pct(l.p) + ")"; }).join(" et ") + " : environ <b>" + pct(pr) + "</b> de chances que le combiné passe.");
+    } else if (rest.length > 1) {
+      var weak = rest.slice().sort(function (a, b) { return a.p - b.p; })[0];
+      items.push("<b>Point faible</b> : « " + esc(weak.label) + " » (" + pct(weak.p) + "), la sélection la plus susceptible de faire perdre le combiné.");
+    }
+    var fair = 1 / prob, line = "<b>Cote juste</b> : 1 ÷ " + pct(prob) + " = " + dec(fair, 2) + ". Le combiné n'est rentable sur la durée que si la cote proposée dépasse ce chiffre";
+    if (xo) {
+      var ev = prob * xo.c - 1;
+      line += ". À la cote 1xBet " + (xo.d ? "≈ " : "") + dec(xo.c, 2) + ", on " + (ev >= 0 ? "gagne" : "perd") + " en moyenne " + Math.abs(Math.round(ev * 100)) + " % de la mise par combiné" + (ev >= 0.05 ? " : intéressant." : ev >= -0.005 ? " : à peu près à l'équilibre." : " : la cote est trop basse pour être rentable.");
+    } else line += ".";
+    items.push(line);
+    if (!isLive) {
+      items.push("<b>Pourquoi ces sélections</b> : une seule par match, la plus probable entre 62 et 90 %, en préférant le résultat et la double chance (les plus fiables d'après l'historique de chaque sélection ci-dessus), en priorité celles cotées par 1xBet, et assemblées pour viser une cote de " + (target === 2 ? "2" : "1,5") + ".");
+      var h = COMBO_HIST[target];
+      if (h) items.push("<b>Ce que donne cette méthode</b> : sur 2024-25 et 2025-26 (football, 5 grands championnats), les combinés à " + (target === 2 ? "2" : "1,5") + " construits ainsi ont passé <b>" + dec(100 * h.won / h.n, 1) + " %</b> du temps (" + h.won + " sur " + h.n + ", le modèle annonçait " + dec(h.ann, 1) + " %), avec jusqu'à " + h.streak + " combinés perdus d'affilée." + (allBig5 ? "" : " Ce combiné contient d'autres sports, pour lesquels on n'a pas d'historique testé."));
+    }
+    items.push("<b>Prudence</b> : même bien construit, un combiné comme celui-ci perd environ " + lossFreq(1 - prob) + ". Mise toujours la même petite somme, jamais plus que ce que tu peux perdre.");
+    return '<details class="analysis" open><summary>Analyse du combiné</summary><ul>' + items.map(function (x) { return "<li>" + x + "</li>"; }).join("") + "</ul></details>";
+  }
+
   // ---------- vues ----------
   function legHTML(l, d) {
     var m = l.m, live = !!m.g;
@@ -1819,6 +1873,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     return '<li class="leg"><div class="leg-top"><div><div class="leg-ctx"><span class="tag' + (live ? " livetag" : "") + '">' + E.SHORT[(live ? m.g.comp : m.comp)] + "</span>" + esc(when) + '</div><div class="leg-match">' + esc(m.hn + " – " + m.an) + '</div><div class="leg-pick">' + esc(l.label) + '</div></div>' +
       '<div class="leg-p"><strong>' + pct(l.p) + "</strong><small>cote juste " + odds(l.p) + "</small></div></div>" +
       '<p class="why" style="margin:0">' + esc(l.why || "") + "</p>" +
+      (live || !l.mk ? "" : histLine(m.comp, l.mk.id, l.p)) +
       (live || !l.mk ? "" : xbInput(legKeyLive(l), l.p, { comp: m.comp, fid: m.fid || "", h: m.h, a: m.a, t: m.t, mk: l.mk.id, label: l.label, hn: m.hn, an: m.an }, autoOf(l.mk))) +
       (live || !l.mk ? "" : tgButtons(tgPayload(m.comp, m.t, m.hn, m.an, l.label, coteOf(legKeyLive(l), autoOf(l.mk)), l.why, m.tn))) +
       (key && state.cache.byKey[key] && !state.cache.byKey[key].g ? '<button class="open-link" data-key="' + esc(key) + '">Voir la fiche du match</button>' : "") + "</li>";
@@ -1832,6 +1887,8 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       '<p class="pass">Passe environ <b>' + freq(cb.prob) + "</b> selon le modèle (" + pct(cb.prob) + ").</p></div>" +
       '<ol class="legs">' + cb.legs.map(legHTML).join("") + "</ol>" +
       (isLive ? "" : comboXb(cb.legs.map(legKeyLive), cb.prob, cb.odds, cb.legs.map(function (l) { return autoOf(l.mk); }))) +
+      comboAnalysis(cb.legs.map(function (l) { return { label: l.label, p: l.p }; }), cb.prob, cb.target || (/cote 2/.test(title) ? 2 : 1.5), xo, isLive,
+        cb.legs.every(function (l) { return !l.m.g && E.BIG5.indexOf(l.m.comp) >= 0; })) +
       '<div class="combo-foot">' + sub + "</div></section>";
   }
   // ---------- combinés archivés ----------
@@ -1859,7 +1916,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     var key = l.comp + ":" + l.h + "-" + l.a + ":" + l.t, has = state.cache && state.cache.byKey[key], d = new Date(l.t), au = frozenAuto(l), co = coteOf(legKeyFrozen(l), au);
     return '<li class="leg"><div class="leg-top"><div><div class="leg-ctx"><span class="tag">' + E.SHORT[l.comp] + "</span>" + esc(cap(fShort.format(d)) + " " + fTime.format(d)) + " " + legBadge(r) + '</div><div class="leg-match">' + esc(l.hn + " – " + l.an) + '</div><div class="leg-pick">' + esc(l.label) + "</div></div>" +
       '<div class="leg-p"><strong>' + pct(l.p) + "</strong><small>cote juste " + odds(l.p) + "</small></div></div>" +
-      '<p class="why" style="margin:0">' + esc(l.why || "") + "</p>" +
+      '<p class="why" style="margin:0">' + esc(l.why || "") + "</p>" + histLine(l.comp, l.id, l.p) +
       (r.r === "pending" ? xbInput(legKeyFrozen(l), l.p, { comp: l.comp, fid: l.fid || "", h: l.h, a: l.a, t: l.t, mk: l.id, label: l.label, hn: l.hn, an: l.an }, au) + tgButtons(tgPayload(l.comp, l.t, l.hn, l.an, l.label, co, l.why, has && has.tn)) :
         co ? '<div class="xbline"><span class="note">Cote 1xBet : ' + (co.d ? "≈\u00a0" : "") + dec(co.c, 2) + "</span>" + valueHTML(l.p, co.c) + "</div>" : "") +
       (has ? '<button class="open-link" data-key="' + esc(key) + '">Voir la fiche du match</button>' : "") + "</li>";
@@ -1875,6 +1932,8 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       '<p class="pass">' + pass + "</p></div>" +
       '<ol class="legs">' + h.legs.map(function (l, i) { return frozenLegHTML(l, s.legs[i]); }).join("") + "</ol>" +
       comboXb(h.legs.map(legKeyFrozen), h.prob, h.odds, h.legs.map(frozenAuto)) +
+      (s.status === "pending" ? comboAnalysis(h.legs.map(function (l, i) { return { label: l.label, p: l.p, r: s.legs[i] && s.legs[i].r }; }), h.prob, h.target, xo, false,
+        h.legs.every(function (l) { return E.BIG5.indexOf(l.comp) >= 0; })) : "") +
       '<div class="combo-foot">' + sub + "</div></section>";
   }
   var SUB15 = "Construit en priorité avec des sélections cotées par 1xBet (cotes relevées automatiquement), pour viser une cote de 1,5 chez 1xBet. ≈ : une des cotes est recalculée, la cote réelle peut différer un peu.";

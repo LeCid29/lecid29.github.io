@@ -1,5 +1,5 @@
 // 2 Odds — service worker : démarrage rapide et affichage hors connexion
-const SHELL = "2odds-shell-6b1b95c00a", DATA = "2odds-data", FONTS = "2odds-fonts";
+const SHELL = "2odds-shell-65315d8bc3", DATA = "2odds-data", FONTS = "2odds-fonts";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icons/icon-96.png", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-512-maskable.png"];
 self.addEventListener("install", (e) => {
   const dataUrl = new URL("data/app.json", self.registration.scope).href;
