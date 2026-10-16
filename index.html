@@ -136,8 +136,9 @@ details.ana summary { cursor: pointer; font-weight: 600; font-size: 13.5px; colo
 .ana-k { font-size: 12px; font-weight: 700; color: var(--ink); letter-spacing: .01em; }
 .ana-v { font-size: 13.5px; color: var(--muted); line-height: 1.45; }
 .ana-why .ana-v { color: var(--ink); }
-.anacard details.ana { background: transparent; border: 0; padding: 0; }
-.anacard details.ana > summary { display: none; }
+.ana-lead { border-left: 3px solid var(--pitch); padding: 1px 0 1px 10px; display: grid; gap: 2px; }
+.ana-lead .ana-v { margin: 0; color: var(--ink); }
+.anacard .ana-row:first-of-type { margin-top: 2px; }
 .syn { margin: 8px 0 0; font-size: 13.5px; color: var(--ink); }
 .combo-foot { padding: 10px 14px 14px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
 
@@ -1823,13 +1824,17 @@ details p { margin: 8px 0 0; max-width: 64ch; }
 
   // ---------- analyse de match (rédigée à chaque mise à jour pour les sélections des combinés) ----------
   var ANA_ROWS = [["ctx", "🏆 Enjeu et contexte"], ["forme", "📊 Forme"], ["eff", "🩹 Effectif"], ["h2h", "🔁 Face-à-face"], ["arb", "🧑‍⚖️ Arbitre"], ["why", "✅ Pourquoi ce prono"]];
-  function anaHTML(a, open) {
-    if (!a) return "";
-    var rows = ANA_ROWS.filter(function (r) { return a[r[0]]; }).map(function (r) {
-      return '<div class="ana-row' + (r[0] === "why" ? " ana-why" : "") + '"><span class="ana-k">' + r[1] + '</span><span class="ana-v">' + esc(a[r[0]]) + "</span></div>";
-    }).join("");
-    if (!rows) return "";
-    return '<details class="ana"' + (open ? " open" : "") + "><summary>Analyse du match</summary>" + rows + (a.src ? '<p class="src">Sources : ' + esc(a.src) + "</p>" : "") + "</details>";
+  function anaRow(k, label, v) { return '<div class="ana-row' + (k === "why" ? " ana-why" : "") + '"><span class="ana-k">' + label + '</span><span class="ana-v">' + esc(v) + "</span></div>"; }
+  function anaRows(a, withWhy) {
+    return ANA_ROWS.filter(function (r) { return a[r[0]] && (withWhy || r[0] !== "why"); }).map(function (r) { return anaRow(r[0], r[1], a[r[0]]); }).join("");
+  }
+  function anaSrc(a) { return a.src ? '<p class="src">Sources : ' + esc(a.src) + "</p>" : ""; }
+  // Sélection d'un combiné : « Pourquoi ce prono » visible, le reste de l'analyse (et les chiffres du modèle) dépliable.
+  function whyBlock(auto, a) {
+    if (!a) return '<p class="why" style="margin:0">' + esc(auto || "") + "</p>";
+    var lead = a.why ? '<div class="ana-lead"><span class="ana-k">✅ Pourquoi ce prono</span><p class="ana-v">' + esc(a.why) + "</p></div>" : '<p class="why" style="margin:0">' + esc(auto || "") + "</p>";
+    var rows = anaRows(a, false) + (a.why && auto ? anaRow("mod", "📈 Les chiffres du modèle", auto) : "");
+    return lead + (rows ? '<details class="ana"><summary>Analyse complète : enjeu, forme, effectif, face-à-face, arbitre</summary>' + rows + anaSrc(a) + "</details>" : "");
   }
   function anaOfKey(key) { var m = key && state.cache && state.cache.byKey[key]; return m && m.note && m.note.ana ? m.note.ana : null; }
 
@@ -1840,8 +1845,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     var key = live ? (m.pre ? m.pre.key : m.key) : m.key;
     return '<li class="leg"><div class="leg-top"><div><div class="leg-ctx"><span class="tag' + (live ? " livetag" : "") + '">' + E.SHORT[(live ? m.g.comp : m.comp)] + "</span>" + esc(when) + '</div><div class="leg-match">' + esc(m.hn + " – " + m.an) + '</div><div class="leg-pick">' + esc(l.label) + '</div></div>' +
       '<div class="leg-p"><strong>' + pct(l.p) + "</strong><small>cote juste " + odds(l.p) + "</small></div></div>" +
-      '<p class="why" style="margin:0">' + esc(l.why || "") + "</p>" +
-      (live ? "" : anaHTML(m.note && m.note.ana, true)) +
+      whyBlock(l.why, live ? null : m.note && m.note.ana) +
       (live || !l.mk ? "" : xbInput(legKeyLive(l), l.p, { comp: m.comp, fid: m.fid || "", h: m.h, a: m.a, t: m.t, mk: l.mk.id, label: l.label, hn: m.hn, an: m.an }, autoOf(l.mk))) +
       (live || !l.mk ? "" : tgButtons(tgPayload(m.comp, m.t, m.hn, m.an, l.label, coteOf(legKeyLive(l), autoOf(l.mk)), (m.note && m.note.ana && m.note.ana.why) || l.why, m.tn))) +
       (key && state.cache.byKey[key] && !state.cache.byKey[key].g ? '<button class="open-link" data-key="' + esc(key) + '">Voir la fiche du match</button>' : "") + "</li>";
@@ -1882,7 +1886,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     var key = l.comp + ":" + l.h + "-" + l.a + ":" + l.t, has = state.cache && state.cache.byKey[key], d = new Date(l.t), au = frozenAuto(l), co = coteOf(legKeyFrozen(l), au);
     return '<li class="leg"><div class="leg-top"><div><div class="leg-ctx"><span class="tag">' + E.SHORT[l.comp] + "</span>" + esc(cap(fShort.format(d)) + " " + fTime.format(d)) + " " + legBadge(r) + '</div><div class="leg-match">' + esc(l.hn + " – " + l.an) + '</div><div class="leg-pick">' + esc(l.label) + "</div></div>" +
       '<div class="leg-p"><strong>' + pct(l.p) + "</strong><small>cote juste " + odds(l.p) + "</small></div></div>" +
-      '<p class="why" style="margin:0">' + esc(l.why || "") + "</p>" + anaHTML(l.ana || anaOfKey(key), r.r === "pending" || r.r === "live") +
+      whyBlock(l.why, l.ana || anaOfKey(key)) +
       (r.r === "pending" ? xbInput(legKeyFrozen(l), l.p, { comp: l.comp, fid: l.fid || "", h: l.h, a: l.a, t: l.t, mk: l.id, label: l.label, hn: l.hn, an: l.an }, au) + tgButtons(tgPayload(l.comp, l.t, l.hn, l.an, l.label, co, ((l.ana || anaOfKey(key) || {}).why) || l.why, has && has.tn)) :
         co ? '<div class="xbline"><span class="note">Cote 1xBet : ' + (co.d ? "≈\u00a0" : "") + dec(co.c, 2) + "</span>" + valueHTML(l.p, co.c) + "</div>" : "") +
       (has ? '<button class="open-link" data-key="' + esc(key) + '">Voir la fiche du match</button>' : "") + "</li>";
@@ -2117,7 +2121,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
         (m.note.abs && m.note.abs.length ? '<div class="abs">' + m.note.abs.map(function (a) { return "<span>" + esc(a) + "</span>"; }).join("") + "</div>" : "") +
         (m.note.adj ? '<p class="note">Pris en compte : buts attendus ajustés (' + dec(m.note.adj[0], 2) + " / " + dec(m.note.adj[1], 2) + ").</p>" : "") +
         (m.note.src ? '<p class="src">Source : ' + esc(m.note.src) + "</p>" : "") + "</section>";
-      if (m.note.ana) h += '<section class="card anacard"><h3>Analyse du match</h3>' + anaHTML(m.note.ana, true) + "</section>";
+      if (m.note.ana) h += '<section class="card anacard"><h3>Analyse du match</h3>' + anaRows(m.note.ana, true) + anaSrc(m.note.ana) + "</section>";
     }
     GROUPS.forEach(function (g) {
       var rows = m.markets.filter(function (x) { return x.grp === g[0]; });
