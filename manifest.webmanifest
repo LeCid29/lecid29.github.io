@@ -1,0 +1,43 @@
+{
+ "id": "./",
+ "name": "2 Odds",
+ "short_name": "2 Odds",
+ "description": "Pronostics, combinés du jour à 1,5 et 2, live et bilan : football, NBA, NHL, MLB et tennis.",
+ "lang": "fr",
+ "dir": "ltr",
+ "start_url": "./?source=pwa",
+ "scope": "./",
+ "display": "standalone",
+ "orientation": "portrait",
+ "background_color": "#eef2ee",
+ "theme_color": "#00824a",
+ "categories": [
+  "sports"
+ ],
+ "icons": [
+  {
+   "src": "icons/icon-96.png",
+   "sizes": "96x96",
+   "type": "image/png",
+   "purpose": "any"
+  },
+  {
+   "src": "icons/icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png",
+   "purpose": "any"
+  },
+  {
+   "src": "icons/icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any"
+  },
+  {
+   "src": "icons/icon-512-maskable.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "maskable"
+  }
+ ]
+}
