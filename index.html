@@ -963,15 +963,17 @@ details p { margin: 8px 0 0; max-width: 64ch; }
   }
 
   // ---------- combinés ----------
-  function buildCombos(cands, targets) {
+  function buildCombos(cands, targets, maxLegs) {
     // cands : [{key, matchKey, label, p, odds, why, t, sport}]
+    // maxLegs : nombre maximal de sélections par cote visée, ex. {2: 2} (4 par défaut)
     var pool = cands.slice().sort(function (a, b) { return b.p - a.p; }).slice(0, 24);
     var used = {}, out = [];
     targets.forEach(function (target) {
-      var best = null;
+      var best = null, ml = (maxLegs && maxLegs[target]) || 4;
       var avail = pool.filter(function (c) { return !used[c.matchKey]; });
       var n = avail.length;
       function consider(legs) {
+        if (legs.length > ml) return;
         var prob = legs.reduce(function (s, l) { return s * l.p; }, 1), odds = 1 / prob;
         // si toutes les sélections ont une cote 1xBet, on vise la cote 1,5 ou 2 CHEZ 1xBET
         var bo = legs.every(function (l) { return l.o; }) ? legs.reduce(function (s, l) { return s * l.o; }, 1) : null;
@@ -986,10 +988,10 @@ details p { margin: 8px 0 0; max-width: 64ch; }
         for (var j = i + 1; j < n; j++) {
           if (avail[j].matchKey === avail[i].matchKey) continue;
           consider([avail[i], avail[j]]);
-          for (var k = j + 1; k < n; k++) {
+          for (var k = j + 1; k < n && ml >= 3; k++) {
             if (avail[k].matchKey === avail[i].matchKey || avail[k].matchKey === avail[j].matchKey) continue;
             consider([avail[i], avail[j], avail[k]]);
-            for (var m = k + 1; m < n && n <= 18; m++) {
+            for (var m = k + 1; m < n && n <= 18 && ml >= 4; m++) {
               if ([avail[i], avail[j], avail[k]].some(function (x) { return x.matchKey === avail[m].matchKey; })) continue;
               consider([avail[i], avail[j], avail[k], avail[m]]);
             }
@@ -1122,6 +1124,11 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     if (d) parts.push(d + " défaite" + (d > 1 ? "s" : ""));
     return name + " : " + parts.join(", ") + " sur ses " + f.length + " derniers matchs.";
   }
+  // matchs nuls d'une équipe sur ses n derniers matchs : {d: nuls, n: matchs}
+  function drawRate(results, team, n) {
+    var rows = (results || []).filter(function (r) { return r[1] === team || r[2] === team; }).slice(-(n || 10));
+    return { d: rows.filter(function (r) { return r[3] === r[4]; }).length, n: rows.length };
+  }
   function teamAvg(results, team) {
     var gf = 0, ga = 0, n = 0;
     results.forEach(function (r) { if (r[1] === team) { gf += r[3]; ga += r[4]; n++; } else if (r[2] === team) { gf += r[4]; ga += r[3]; n++; } });
@@ -1216,6 +1223,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
           fid: f.id || "", xb: f.xb || null, key: code + ":" + f.h + "-" + f.a + ":" + f.t, comp: code, sport: "foot", t: f.t, h: f.h, a: f.a, hn: H, an: A,
           p1: g.p1, pn: g.pn, p2: g.p2, goals: g, markets: S.footballMarkets(g, H, A), main: S.mainPick(g.p1, g.pn, g.p2, H, A),
           corners: pred.corners, cards: pred.cards, fouls: pred.fouls, safe: safePicks(g, pred, H, A), form: { h: formOf(doc.results, f.h, 5), a: formOf(doc.results, f.a, 5) },
+          drw: { h: drawRate(doc.results, f.h, 10), a: drawRate(doc.results, f.a, 10) },
           stake: (note && note.enjeu) || S.stakeLeague(tab, f.h, f.a, H, A, code), note: note, sr: sr, div: div,
           source: "notre modèle", reliab: div == null ? "moyenne" : div < 0.1 ? "bonne" : div < 0.15 ? "moyenne" : "à surveiller",
           expected: { h: g.xgHome, a: g.xgAway, unit: "buts attendus" }, avg: { h: teamAvg(doc.results, f.h), a: teamAvg(doc.results, f.a) }
@@ -1241,6 +1249,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
           fid: f.id || "", xb: f.xb || null, key: code + ":" + f.h + "-" + f.a + ":" + f.t, comp: code, sport: "foot", t: f.t, h: f.h, a: f.a, hn: H, an: A,
           p1: g.p1, pn: g.pn, p2: g.p2, goals: g, markets: S.footballMarkets(g, H, A), main: S.mainPick(g.p1, g.pn, g.p2, H, A),
           form: { h: formOf(fh, f.h, 5), a: formOf(fa, f.a, 5) }, avg: { h: teamAvg(fh, f.h), a: teamAvg(fa, f.a) },
+          drw: { h: drawRate(fh, f.h, 10), a: drawRate(fa, f.a, 10) },
           stake: (note && note.enjeu) || (code === "mls" ? stakeMLS(d, f.h, f.a, H, A) : stakeCL(d, f.h, f.a, H, A)), note: note,
           sr: null, div: null, source: "les probabilités Sportradar", reliab: "moyenne", expected: { h: lam[0], a: lam[1], unit: "buts attendus" }
         });
@@ -1308,8 +1317,8 @@ details p { margin: 8px 0 0; max-width: 64ch; }
 
   // ---------- explications ----------
   var EXCLUDE = { N: 1 };
-  function legWhy(m, mk) {
-    var s = [], P = pc(mk.p);
+  function legWhy(m, mk, pUse) {
+    var s = [], P = pc(pUse != null ? pUse : mk.p);
     var src = mk.grp !== "res" && /Sportradar/.test(m.source) ? "notre modèle de score (calé sur les probabilités Sportradar)" : m.source;
     s.push("Probabilité " + P + " selon " + src + ".");
     if (m.sr && (mk.grp === "res" || mk.grp === "dc")) {
@@ -1329,51 +1338,91 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     return s.join(" ");
   }
 
-  // onlyXb : seulement les matchs cotés par 1xBet et les sélections dont la cote 1xBet est connue (combiné jouable au vrai prix)
-  function candidates(matches, fromMs, toMs, lo, hi, onlyXb) {
+  // ---------- règles des combinés du jour (version 2, demandée par Landry le 23 oct. 2026) ----------
+  // 1. un match déjà figé dans un combiné d'un jour précédent n'est plus repris ;
+  // 2. l'analyse peut écarter une sélection : note.veto = ["12"] (marchés) ou ["*"] (tout le match), note.vetoWhy = raison ;
+  // 3. « Pas de match nul » : probabilité ≥ 85 % avec la probabilité de nul la plus prudente (modèle ou 1xBet sans marge)
+  //    et au plus 25 % de nuls sur les 10 derniers matchs de chaque équipe (4 matchs au moins) ;
+  // 4. valeur : probabilité du modèle ≥ 1/cote 1xBet + 3 points (et < +10 points : au-delà, c'est presque toujours le modèle qui se trompe) ;
+  // 5. 2 sélections au plus pour le combiné à cote 2.
+  var RULES_V = 2, VAL_MIN = 0.03, VAL_MAX = 0.10, D12_MIN = 0.85, DRAW_MAX = 0.25, DRAW_N = 4, MAX_LEGS = { 2: 2 };
+  function vetoed(m, mk) {
+    var v = m.note && m.note.veto;
+    if (!v) return false;
+    if (v === "*" || v === true) return true;
+    return Array.isArray(v) && (v.indexOf("*") >= 0 || v.indexOf(mk.id) >= 0);
+  }
+  function prudent12(m) { // probabilité « pas de nul » avec le nul le plus probable des deux avis
+    var pn = m.pn, r = m.xb && m.xb.r;
+    if (r && r.length === 3 && r[0] > 1 && r[1] > 1 && r[2] > 1) { var q = 1 / r[0] + 1 / r[1] + 1 / r[2]; pn = Math.max(pn, (1 / r[1]) / q); }
+    return 1 - pn;
+  }
+  function fewDraws(m) {
+    var d = m.drw; if (!d) return false;
+    return [d.h, d.a].every(function (x) { return x && x.n >= DRAW_N && x.d / x.n <= DRAW_MAX; });
+  }
+  // clés des matchs déjà utilisés par les combinés figés des jours précédents
+  function usedKeys(hist, nowMs) {
+    var day = dayKey(nowMs), u = {};
+    (hist || []).forEach(function (h) {
+      if (h.kind !== "jour" || !h.legs || h.day >= day) return;
+      h.legs.forEach(function (l) { u[l.comp + ":" + l.h + "-" + l.a + ":" + l.t] = 1; if (l.fid) u["fid:" + l.comp + ":" + l.fid] = 1; });
+    });
+    return u;
+  }
+  function candidates(matches, fromMs, toMs, lo, hi, excl, rej) {
     var c = [];
+    rej = rej || {};
+    function no(k) { rej[k] = (rej[k] || 0) + 1; }
     matches.forEach(function (m) {
       var tt = Date.parse(m.t); if (tt < fromMs || tt > toMs) return;
       if (m.reliab === "faible") return;
-      if (onlyXb && !m.xbAt) return;
-      var best = null;
-      function pick(onlyXb) {
-        m.markets.forEach(function (mk) {
-          if (EXCLUDE[mk.id] || !mk.rule || mk.p < lo || mk.p > hi) return;
-          if (onlyXb && !mk.xb) return;
-          if (m.div != null && m.div >= 0.15 && (mk.grp === "res" || mk.grp === "dc")) return;
-          if (m.sport === "basket" && mk.grp === "tot") return;
-          // préférence aux marchés simples : résultat et double chance, puis buts, puis handicaps
-          var w = mk.grp === "res" || mk.grp === "dc" ? 0.04 : mk.grp === "hcp" ? -0.05 : 0;
-          if (!best || mk.p + w > best.p + best.w) { best = mk; best.w = w; }
-        });
-      }
-      if (onlyXb) pick(true);
-      else { if (m.xbAt) pick(true); if (!best) pick(false); }
-      if (best) c.push({ matchKey: m.key, m: m, mk: best, label: best.label, p: best.p, o: best.xb || null, q: m.reliab === "bonne" ? 1 : 0.5 });
+      if (excl && (excl[m.key] || (m.fid && excl["fid:" + m.comp + ":" + m.fid]))) { no("used"); return; }
+      if (!m.xbAt) { no("noXb"); return; }
+      var best = null, seen = {};
+      m.markets.forEach(function (mk) {
+        if (EXCLUDE[mk.id] || !mk.rule || !mk.xb) return;
+        var p = mk.p;
+        if (mk.id === "12" && m.sport === "foot") {
+          p = Math.min(p, prudent12(m));
+          if (p >= lo && p <= hi && (p < D12_MIN || !fewDraws(m))) { seen.d12 = 1; return; }
+        }
+        if (p < lo || p > hi) return;
+        if (m.div != null && m.div >= 0.15 && (mk.grp === "res" || mk.grp === "dc")) return;
+        if (m.sport === "basket" && mk.grp === "tot") return;
+        if (vetoed(m, mk)) { seen.veto = 1; return; }
+        var edge = p - 1 / mk.xb;
+        if (edge < VAL_MIN) { seen.noValue = 1; return; }
+        if (edge >= VAL_MAX) { seen.gap = 1; return; }
+        // préférence aux marchés simples : résultat et double chance, puis buts, puis handicaps
+        var w = mk.grp === "res" || mk.grp === "dc" ? 0.04 : mk.grp === "hcp" ? -0.05 : 0;
+        if (!best || p + w > best.p + best.w) best = { mk: mk, p: p, w: w, edge: edge };
+      });
+      if (best) c.push({ matchKey: m.key, m: m, mk: best.mk, label: best.mk.label, p: best.p, o: best.mk.xb, edge: best.edge, q: m.reliab === "bonne" ? 1 : 0.5 });
+      else Object.keys(seen).forEach(no);
     });
     return c;
   }
+  function valueWhy(l) {
+    return "Cote 1xBet " + String(l.o).replace(".", ",") + (l.mk.xbd ? " (≈)" : "") + ", soit " + pc(1 / l.o) + " : le modèle donne " + pc(l.p) + ", " + Math.round(l.edge * 100) + " point" + (Math.round(l.edge * 100) > 1 ? "s" : "") + " de mieux.";
+  }
 
-  function dayCombos(matches, nowMs) {
-    var from = nowMs + 15 * 60e3, hours = [24, 36, 48, 72], c = [], h = 24, i;
-    // d'abord uniquement des sélections cotées par 1xBet ; s'il n'y en a pas assez, toutes les sélections
-    for (i = 0; i < hours.length; i++) {
-      h = hours[i];
-      c = candidates(matches, from, nowMs + h * 3600e3, 0.62, 0.9, true);
-      if (c.length >= 5) break;
+  function dayCombos(matches, nowMs, hist) {
+    var from = nowMs + 15 * 60e3, hours = [24, 36, 48, 72], excl = usedKeys(hist, nowMs), best = null;
+    // fenêtre la plus courte qui permet de construire les deux combinés (sinon celle qui en construit le plus)
+    for (var i = 0; i < hours.length; i++) {
+      var rej = {}, c = candidates(matches, from, nowMs + hours[i] * 3600e3, 0.62, 0.9, excl, rej);
+      var combos = S.buildCombos(c, [1.5, 2], MAX_LEGS), built = combos.filter(function (cb) { return cb.legs.length; }).length;
+      if (!best || built > best.built || (built === 0 && best.built === 0)) best = { combos: combos, hours: hours[i], n: c.length, rej: rej, built: built };
+      if (built === 2) break;
     }
-    var combos = c.length >= 3 ? S.buildCombos(c, [1.5, 2]) : null;
-    if (!combos || combos.some(function (cb) { return !cb.legs.length; })) {
-      for (i = 0; i < hours.length; i++) {
-        h = hours[i];
-        c = candidates(matches, from, nowMs + h * 3600e3, 0.62, 0.9, false);
-        if (c.length >= 5) break;
-      }
-      combos = S.buildCombos(c, [1.5, 2]);
-    }
-    combos.forEach(function (cb) { cb.legs.forEach(function (l) { l.why = legWhy(l.m, l.mk); }); });
-    return { combos: combos, hours: h, n: c.length };
+    best.combos.forEach(function (cb) {
+      cb.legs.forEach(function (l) { l.why = legWhy(l.m, l.mk, l.p) + " " + valueWhy(l); });
+      if (!cb.legs.length) cb.none = best.n ? "Les sélections qui battent la cote 1xBet d'au moins 3 points ne suffisent pas pour viser une cote de " + String(cb.target).replace(".", ",") + " sur les " + best.hours + " prochaines heures."
+        : (best.rej.noXb && !best.rej.noValue && !best.rej.d12 && !best.rej.veto ? "Les cotes 1xBet des prochains matchs ne sont pas encore relevées."
+        : "Aucune sélection ne bat la cote 1xBet d'au moins 3 points sur les " + best.hours + " prochaines heures.");
+    });
+    return { combos: best.combos, hours: best.hours, n: best.n, rej: best.rej, rules: RULES_V };
   }
 
   // ---------- live ----------
@@ -1551,12 +1600,18 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       return { id: id, kind: "value", day: day, at: at, odds: v.mk.xb, prob: Math.round(v.p * 10000) / 10000, ev: Math.round(v.ev * 1000) / 1000, legs: [legRecord(l, false)] };
     });
   }
-  // combinés du jour à archiver (cote 1,5 et cote 2), calculés sur tous les matchs, sans filtre
-  function freezeDay(matches, nowMs) {
-    var dc = dayCombos(matches, nowMs), day = dayKey(nowMs), at = new Date(nowMs).toISOString(), out = [];
+  // combinés du jour à archiver (cote 1,5 et cote 2), calculés sur tous les matchs, sans filtre.
+  // Pas de combiné valable : on fige un document « none » (legs vides, statut void) pour l'afficher et ne pas refiger dans la journée.
+  function freezeDay(matches, nowMs, hist) {
+    var dc = dayCombos(matches, nowMs, hist), day = dayKey(nowMs), at = new Date(nowMs).toISOString(), out = [];
     dc.combos.forEach(function (cb) {
-      if (!cb || !cb.legs.length) return;
-      out.push({ id: "J" + day.replace(/-/g, "") + "-" + String(cb.target).replace(".", ""), kind: "jour", target: cb.target, day: day, at: at,
+      if (!cb) return;
+      var id = "J" + day.replace(/-/g, "") + "-" + String(cb.target).replace(".", "");
+      if (!cb.legs.length) {
+        out.push({ id: id, kind: "jour", target: cb.target, day: day, at: at, v: RULES_V, none: 1, reason: cb.none || "", status: "void", odds: 0, prob: 0, hours: dc.hours, legs: [] });
+        return;
+      }
+      out.push({ id: id, kind: "jour", target: cb.target, day: day, at: at, v: RULES_V,
         odds: Math.round(cb.odds * 100) / 100, xbOdds: cb.xbOdds ? Math.round(cb.xbOdds * 100) / 100 : null, prob: Math.round(cb.prob * 10000) / 10000, hours: dc.hours, legs: cb.legs.map(function (l) { return legRecord(l, false); }) });
     });
     return out;
@@ -1585,11 +1640,23 @@ details p { margin: 8px 0 0; max-width: 64ch; }
   }
   // bilan : taux de réussite global, par type, et des sélections
   function historyStats(hdocs, docs, nowMs) {
-    var groups = { all: { n: 0, won: 0, lost: 0, pexp: 0 }, j15: { n: 0, won: 0, lost: 0, pexp: 0 }, j2: { n: 0, won: 0, lost: 0, pexp: 0 }, live: { n: 0, won: 0, lost: 0, pexp: 0 }, pick: { n: 0, won: 0, lost: 0, pexp: 0 }, value: { n: 0, won: 0, lost: 0, pexp: 0, pl: 0, iexp: 0 } };
+    var groups = { all: { n: 0, won: 0, lost: 0, pexp: 0 }, j15: { n: 0, won: 0, lost: 0, pexp: 0 }, j2: { n: 0, won: 0, lost: 0, pexp: 0 }, live: { n: 0, won: 0, lost: 0, pexp: 0 }, pick: { n: 0, won: 0, lost: 0, pexp: 0 }, value: { n: 0, won: 0, lost: 0, pexp: 0, pl: 0, iexp: 0 },
+      v2: { n: 0, won: 0, lost: 0, pexp: 0, pl: 0, xn: 0, none: 0, since: null } };
     var legs = { n: 0, won: 0 }, pending = 0, pendingPicks = 0, pendingValue = 0, rows = [];
     hdocs.forEach(function (hd) {
+      if (hd.none) { // jour sans combiné valable (règles v2)
+        var gn = groups.v2; gn.none++; if (!gn.since || hd.day < gn.since) gn.since = hd.day;
+        return;
+      }
       var s = settleCombo(hd, docs, nowMs), k = hd.kind === "pick" ? "pick" : hd.kind === "value" ? "value" : hd.kind === "live" ? "live" : hd.target === 2 ? "j2" : "j15";
       rows.push({ hd: hd, s: s });
+      if (hd.kind === "jour" && (hd.v || 1) >= 2) {
+        var g2 = groups.v2; if (!g2.since || hd.day < g2.since) g2.since = hd.day;
+        if (s.status === "won" || s.status === "lost") {
+          g2.n++; g2[s.status]++; g2.pexp += hd.prob;
+          if (hd.xbOdds) { g2.xn++; g2.pl += s.status === "won" ? hd.xbOdds - 1 : -1; }
+        }
+      }
       if (k === "value") {
         var gv = groups.value;
         if (s.status === "won" || s.status === "lost") { gv.n++; gv[s.status]++; gv.pexp += hd.prob; gv.iexp += 1 / hd.odds; gv.pl += s.status === "won" ? hd.odds - 1 : -1; }
@@ -1618,7 +1685,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
   }
 
   var api = { BIG5: BIG5, ORDER: ORDER, SHORT: SHORT, LABEL: LABEL, SPORT_OF: SPORT_OF, buildMatches: buildMatches, dayCombos: dayCombos, liveGames: liveGames, liveCombo: liveCombo, topPicks: topPicks, legWhy: legWhy, formText: formText,
-    dayKey: dayKey, ruleOk: ruleOk, settleCombo: settleCombo, freezeDay: freezeDay, freezeValue: freezeValue, valuePicks: valuePicks, freezeLive: freezeLive, freezeLivePicks: freezeLivePicks, historyStats: historyStats };
+    dayKey: dayKey, ruleOk: ruleOk, RULES: { v: RULES_V, valMin: VAL_MIN, valMax: VAL_MAX, d12: D12_MIN, drawMax: DRAW_MAX, maxLegs2: MAX_LEGS[2] }, settleCombo: settleCombo, freezeDay: freezeDay, freezeValue: freezeValue, valuePicks: valuePicks, freezeLive: freezeLive, freezeLivePicks: freezeLivePicks, historyStats: historyStats };
   if (isNode) module.exports = api; else root.PronoEngine = api;
 })(this);
 
@@ -1852,7 +1919,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
   }
   function comboHTML(cb, title, sub, isLive) {
     if (!cb || !cb.legs.length) {
-      return '<section class="combo' + (isLive ? " live" : "") + '"><div class="combo-head"><div><div class="eyebrow">' + title + '</div><h3>Pas de combiné possible</h3></div><div></div><p class="pass">' + sub + "</p></div></section>";
+      return '<section class="combo' + (isLive ? " live" : "") + '"><div class="combo-head"><div><div class="eyebrow">' + title + '</div><h3>' + (cb && cb.none ? "Pas de combiné valable aujourd\'hui" : "Pas de combiné possible") + '</h3></div><div></div><p class="pass">' + esc((cb && cb.none) || "") + (cb && cb.none ? " " + NONE_TXT : sub) + "</p></div></section>";
     }
     var xo = isLive ? null : comboCote(cb.legs.map(legKeyLive), cb.legs.map(function (l) { return autoOf(l.mk); }));
     return '<section class="combo' + (isLive ? " live" : "") + '"><div class="combo-head"><div><div class="eyebrow">' + title + "</div><h3>" + cb.legs.length + " sélection" + (cb.legs.length > 1 ? "s" : "") + '</h3></div>' + oddsBox(cb.odds, xo) +
@@ -1891,7 +1958,9 @@ details p { margin: 8px 0 0; max-width: 64ch; }
         co ? '<div class="xbline"><span class="note">Cote 1xBet : ' + (co.d ? "≈\u00a0" : "") + dec(co.c, 2) + "</span>" + valueHTML(l.p, co.c) + "</div>" : "") +
       (has ? '<button class="open-link" data-key="' + esc(key) + '">Voir la fiche du match</button>' : "") + "</li>";
   }
+  var NONE_TXT = "Mieux vaut ne rien proposer qu'un combiné sans avantage sur le bookmaker : les combinés reviennent dès que des sélections battent les cotes 1xBet.";
   function frozenComboHTML(h, title, sub) {
+    if (h.none) return '<section class="combo"><div class="combo-head"><div><div class="eyebrow-row"><span class="eyebrow">' + title + '</span></div><h3>Pas de combiné valable aujourd\'hui</h3></div><div></div><p class="pass">' + esc(h.reason || "") + " " + NONE_TXT + "</p></div></section>";
     var s = E.settleCombo(h, state.docs, Date.now()), cs = comboStatus(s);
     var pass = s.status === "won" ? "Combiné gagnant : toutes les sélections sont passées." :
       s.status === "lost" ? "Combiné perdant : " + s.lost + " sélection" + (s.lost > 1 ? "s" : "") + " sur " + h.legs.length + " n'" + (s.lost > 1 ? "ont" : "a") + " pas tenu." :
@@ -1904,8 +1973,9 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       comboXb(h.legs.map(legKeyFrozen), h.prob, h.odds, h.legs.map(frozenAuto)) +
       '<div class="combo-foot">' + sub + "</div></section>";
   }
-  var SUB15 = "Construit en priorité avec des sélections cotées par 1xBet (cotes relevées automatiquement), pour viser une cote de 1,5 chez 1xBet. ≈ : une des cotes est recalculée, la cote réelle peut différer un peu.";
-  var SUB2 = "Sélections différentes du combiné sûr. À cote 2, un combiné bien construit perd encore environ une fois sur deux.";
+  var RULES_TXT = "Règles : seulement des sélections cotées par 1xBet dont la probabilité du modèle dépasse d'au moins 3 points celle de la cote ; un match déjà joué dans un combiné n'est pas repris ; une sélection peut être écartée par l'analyse ; « pas de match nul » seulement à 85 % et entre deux équipes qui font peu de nuls.";
+  var SUB15 = "Vise une cote de 1,5 chez 1xBet. " + RULES_TXT + " ≈ : une des cotes est recalculée, la cote réelle peut différer un peu.";
+  var SUB2 = "Deux sélections au plus, différentes du combiné sûr. À cote 2, un combiné bien construit perd encore environ une fois sur deux : l'objectif est de gagner sur la durée, pas chaque jour. " + RULES_TXT;
   function valueList(c) {
     var now = Date.now(), rows = [], at = null, n = 0;
     c.matches.forEach(function (m) {
@@ -1939,8 +2009,8 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       html = '<p class="intro">Les combinés du jour, figés à la mise à jour du ' + fUpd.format(new Date(fz[0].at)) + " sur les matchs des " + (h0 <= 24 ? "24 heures suivantes" : h0 + " heures suivantes") + ". Ce sont eux qui sont suivis dans le Bilan ; chaque sélection passe en gagné ou perdu avec les résultats.</p>";
       fz.forEach(function (h) { html += frozenComboHTML(h, h.target === 2 ? "Combiné · cote 2" : "Combiné sûr · cote 1,5", h.target === 2 ? SUB2 : SUB15); });
     } else {
-      var dc = E.dayCombos(ms, now), hh = dc.hours;
-      html = '<p class="intro">Deux combinés construits automatiquement sur les matchs des ' + (hh <= 24 ? "prochaines 24 heures" : "prochaines " + hh + " heures") + ", un par match au maximum, à partir des sélections les plus probables. Chaque sélection est expliquée. " +
+      var dc = E.dayCombos(ms, now, state.history), hh = dc.hours;
+      html = '<p class="intro">Deux combinés construits automatiquement sur les matchs des ' + (hh <= 24 ? "prochaines 24 heures" : "prochaines " + hh + " heures") + ", un par match au maximum, à partir des sélections qui battent la cote 1xBet. Chaque sélection est expliquée. " +
         (state.sport === "all" ? "Ils seront figés et suivis dans le Bilan à la prochaine mise à jour." : "Combinés recalculés pour ce filtre : seuls ceux de l'onglet « Tous » sont suivis dans le Bilan.") + "</p>";
       html += comboHTML(dc.combos[0], "Combiné sûr · cote 1,5", SUB15);
       html += comboHTML(dc.combos[1], "Combiné · cote 2", SUB2);
@@ -1976,6 +2046,14 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       "</span></div>" +
       '<div class="grid3">' + rateCell("Sûr · 1,5", g.j15) + rateCell("Cote 2", g.j2) + rateCell("Live", g.live) + "</div>" +
       '<p class="note" style="margin:0">Sélections des combinés gagnées : ' + (st.legs.n ? st.legs.won + " sur " + st.legs.n + " (" + pct(st.legs.won / st.legs.n) + ")" : "aucune terminée") + (st.pending ? " · " + st.pending + " combiné" + (st.pending > 1 ? "s" : "") + " en attente" : "") + ".</p></section>";
+    var g2 = g.v2;
+    if (g2 && (g2.n || g2.none || g2.since)) {
+      html += '<section class="kpi"><div class="kpi-main"><span class="big' + (g2.n ? "" : " none") + '" style="font-size:40px">' + (g2.n ? pct(g2.rate) : "—") + '</span><span class="txt"><b>Nouvelles règles (depuis le ' + esc(fShort.format(new Date(g2.since + "T12:00:00Z"))) + ") : " +
+        (g2.n ? g2.won + " combiné" + (g2.won > 1 ? "s" : "") + " gagné" + (g2.won > 1 ? "s" : "") + " sur " + g2.n : "aucun combiné terminé") + "</b><br><span>" +
+        (g2.xn ? "Résultat aux cotes 1xBet : " + (g2.pl >= 0 ? "+" : "−") + dec(Math.abs(g2.pl), 2) + " pour 1 misé sur chacun (" + evPct(g2.pl / g2.xn) + " par mise). " : "") +
+        (g2.none ? g2.none + " combiné" + (g2.none > 1 ? "s" : "") + " non proposé" + (g2.none > 1 ? "s" : "") + " faute de sélection valable. " : "") +
+        "Seules les sélections qui battent la cote 1xBet d'au moins 3 points sont retenues : il faudra quelques semaines pour juger.</span></span></div></section>";
+    }
     var xbN = 0, xbPL = 0;
     st.rows.forEach(function (row) {
       if (row.hd.kind === "pick" || row.hd.kind === "value" || (row.s.status !== "won" && row.s.status !== "lost")) return;
@@ -2120,6 +2198,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       h += '<section class="card notebox"><h3>Infos d\'avant-match</h3>' + (m.note.txt ? "<p>" + esc(m.note.txt) + "</p>" : "") +
         (m.note.abs && m.note.abs.length ? '<div class="abs">' + m.note.abs.map(function (a) { return "<span>" + esc(a) + "</span>"; }).join("") + "</div>" : "") +
         (m.note.adj ? '<p class="note">Pris en compte : buts attendus ajustés (' + dec(m.note.adj[0], 2) + " / " + dec(m.note.adj[1], 2) + ").</p>" : "") +
+        (m.note.veto ? '<p class="note"><b>Écarté des combinés par l\'analyse</b>' + (m.note.vetoWhy ? " : " + esc(m.note.vetoWhy) : "") + "</p>" : "") +
         (m.note.src ? '<p class="src">Source : ' + esc(m.note.src) + "</p>" : "") + "</section>";
       if (m.note.ana) h += '<section class="card anacard"><h3>Analyse du match</h3>' + anaRows(m.note.ana, true) + anaSrc(m.note.ana) + "</section>";
     }
@@ -2300,7 +2379,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       if (!offline && lastPub && d.publishedAt === lastPub && state.loaded && !state.offline) return true;
       lastPub = d.publishedAt || null; state.pubAt = d.publishedAt || null; state.offline = !!offline;
       state.docs = d.leagues || {};
-      state.history = (d.history || []).filter(function (x) { return x && x.legs && x.legs.length; });
+      state.history = (d.history || []).filter(function (x) { return x && ((x.legs && x.legs.length) || x.none); });
       state.live = d.live || null; state.meta = d.meta || {}; state.odds = d.odds || {};
       state.loaded = true; render(); return true;
     };
@@ -2349,7 +2428,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     }, function () {});
     db.collection("history").onSnapshot(function (snap) {
       var h = [];
-      snap.docs.forEach(function (d) { if (d.exists) { var x = d.data(); if (!x.id) x.id = d.id; if (x.legs && x.legs.length) h.push(x); } });
+      snap.docs.forEach(function (d) { if (d.exists) { var x = d.data(); if (!x.id) x.id = d.id; if ((x.legs && x.legs.length) || x.none) h.push(x); } });
       state.history = h; if (state.loaded) render();
     }, function () {});
     db.doc("live/now").onSnapshot(function (s) { state.live = s.exists ? s.data() : null; if (state.loaded) render(); }, function () {});
