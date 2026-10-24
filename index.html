@@ -121,6 +121,7 @@ main { padding-block: 14px 40px; display: grid; gap: 16px; }
 .legs { list-style: none; margin: 0; padding: 0; }
 .leg { padding: 12px 14px; border-top: 1px solid var(--line); display: grid; gap: 6px; }
 .leg-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; }
+.legno { display: inline-flex; align-items: center; justify-content: center; width: 19px; height: 19px; border-radius: 999px; background: var(--pitch); color: var(--bg); font-family: var(--font-display); font-weight: 700; font-size: 12.5px; line-height: 1; flex: none; }
 .leg-ctx { font-size: 12.5px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .leg-match { font-weight: 600; font-size: 15px; }
 .leg-pick { font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--pitch); line-height: 1.15; }
@@ -140,6 +141,32 @@ details.ana summary { cursor: pointer; font-weight: 600; font-size: 13.5px; colo
 .ana-lead .ana-v { margin: 0; color: var(--ink); }
 .anacard .ana-row:first-of-type { margin-top: 2px; }
 .syn { margin: 8px 0 0; font-size: 13.5px; color: var(--ink); }
+.stkwrap { padding: 0 14px 12px; }
+details.stk summary { font-size: 14px; }
+.stk-head { font-size: 13.5px; margin: 8px 0 2px; }
+.stk-opt { border-top: 1px solid var(--line); padding: 9px 0 3px; display: grid; gap: 5px; }
+.stk-opt:first-of-type { border-top: 0; }
+.stk-h { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; font-weight: 700; font-size: 14.5px; }
+.stk-tag { font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; border-radius: 999px; padding: 1px 8px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.stk-tag.min { background: var(--pitch-soft); color: var(--pitch); border-color: transparent; }
+.stk-bets { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stk-bets b { color: var(--ink); font-weight: 600; }
+.stk-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.stk-grid > div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 7px; display: grid; min-width: 0; }
+.stk-grid .k { font-size: 11.5px; color: var(--muted); line-height: 1.2; }
+.stk-grid .v { font-family: var(--font-display); font-weight: 700; font-size: 18px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.stk-grid .o { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.up { color: var(--pitch) !important; }
+.dn { color: var(--warn) !important; }
+.stk-res { font-size: 13.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stk-tip { font-size: 13.5px; color: var(--ink); border-left: 3px solid var(--pitch); padding: 1px 0 1px 10px; margin: 8px 0 0; }
+.stk-tip.now { border-left-color: var(--live); }
+.stk-note { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
+.bkrow { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.bkrow #bk-amt { width: 112px; }
+.bkrow select { font: inherit; font-size: 15px; font-weight: 600; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 6px; }
+.bkrules { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 13.5px; color: var(--muted); }
+.bkrules b { color: var(--ink); font-weight: 600; }
 .combo-foot { padding: 10px 14px 14px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
 
 /* Bilan et historique */
@@ -1797,8 +1824,99 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     return { groups: groups, legs: legs, pending: pending, pendingPicks: pendingPicks, pendingValue: pendingValue, rows: rows };
   }
 
+  // ---------- gestion de la mise (demande de Landry du 24 oct. 2026) ----------
+  // Répartit une mise S sur un combiné de n sélections pour limiter la perte si un pronostic tombe.
+  // legs : [{o: cote 1xBet (ou cote juste), p: probabilité}] ; step : arrondi des mises (FCFA).
+  // Options : « combo » (tout sur le combiné), « sys » (système (n−1)/n, n ≥ 3), « single » (simples) ;
+  // sys et single sont à retour égal : la mise de chaque pari est proportionnelle à 1/cote, si bien que le
+  // montant récupéré quand un seul pronostic perd ne dépend pas de celui qui perd (aux arrondis près).
+  function kSubsets(n, k) {
+    var out = [];
+    (function rec(start, cur) {
+      if (cur.length === k) { out.push(cur.slice()); return; }
+      for (var i = start; i < n; i++) { cur.push(i); rec(i + 1, cur); cur.pop(); }
+    })(0, []);
+    return out;
+  }
+  function roundStakes(raw, S, step) {
+    var st = raw.map(function (x) { return Math.max(step, Math.round(x / step) * step); });
+    var diff = S - st.reduce(function (a, b) { return a + b; }, 0), big = 0;
+    st.forEach(function (x, i) { if (x > st[big]) big = i; });
+    st[big] = Math.max(step, st[big] + diff);
+    return st;
+  }
+  function equalSplit(S, bets, step) {
+    var inv = bets.map(function (b) { return 1 / b.o; }), sum = inv.reduce(function (a, b) { return a + b; }, 0);
+    var st = roundStakes(inv.map(function (v) { return S * v / sum; }), S, step);
+    bets.forEach(function (b, i) { b.s = st[i]; });
+    return bets;
+  }
+  // montant récupéré par une option pour un état des sélections : "won" paie la cote, "void" rembourse (cote 1),
+  // "lost" fait perdre tout pari qui la contient ; tout autre état est traité comme gagné (scénario « si ça passe »).
+  function planReturn(opt, legs, res) {
+    return opt.bets.reduce(function (tot, b) {
+      var mult = 1;
+      for (var j = 0; j < b.ix.length; j++) {
+        var r = res[b.ix[j]];
+        if (r === "lost") return tot;
+        mult *= r === "void" ? 1 : legs[b.ix[j]].o;
+      }
+      return tot + b.s * mult;
+    }, 0);
+  }
+  function stakePlan(legs, S, step) {
+    step = step || 10;
+    var n = legs.length, opts = [], all = legs.map(function () { return 1; });
+    var O = legs.reduce(function (a, l) { return a * l.o; }, 1);
+    opts.push({ id: "combo", bets: [{ ix: all.map(function (x, i) { return i; }), o: O, s: S }] });
+    if (n >= 3) opts.push({ id: "sys", k: n - 1, bets: equalSplit(S, kSubsets(n, n - 1).map(function (ix) {
+      return { ix: ix, o: ix.reduce(function (a, i) { return a * legs[i].o; }, 1) };
+    }), step) });
+    if (n >= 2) opts.push({ id: "single", bets: equalSplit(S, legs.map(function (l, i) { return { ix: [i], o: l.o }; }), step) });
+    var pAll = 0, pOne = 0, pMore = 0;
+    opts.forEach(function (op) { op.all = 0; op.oneMin = Infinity; op.oneMax = 0; op.pZero = 0; op.er = 0; });
+    for (var mask = 0; mask < (1 << n); mask++) { // bit à 1 = sélection perdue
+      var res = [], pr = 1, nl = 0;
+      for (var i = 0; i < n; i++) {
+        var lost = (mask >> i) & 1; res.push(lost ? "lost" : "won"); nl += lost;
+        pr *= lost ? 1 - legs[i].p : legs[i].p;
+      }
+      if (nl === 0) pAll += pr; else if (nl === 1) pOne += pr; else pMore += pr;
+      opts.forEach(function (op) {
+        var r = planReturn(op, legs, res);
+        if (nl === 0) op.all = r;
+        if (nl === 1) { op.oneMin = Math.min(op.oneMin, r); op.oneMax = Math.max(op.oneMax, r); }
+        if (r < 0.5) op.pZero += pr;
+        op.er += pr * r;
+      });
+    }
+    opts.forEach(function (op) { if (op.oneMin === Infinity) op.oneMin = op.oneMax = op.all; });
+    return { n: n, S: S, O: O, opts: opts, pAll: pAll, pOne: pOne, pMore: pMore };
+  }
+  // Couverture du dernier match : les autres sélections sont gagnées, le combiné (mise S, cote O) attend la dernière.
+  // Miser H = S·O / cote de l'issue contraire assure le même résultat quelle que soit l'issue du dernier match.
+  function hedgePlan(S, O, oOpp, step) {
+    step = step || 10;
+    if (!(oOpp > 1)) return null;
+    var H = Math.max(step, Math.round(S * O / oOpp / step) * step);
+    var ifWin = S * O - S - H, ifOpp = H * oOpp - S - H;
+    return { H: H, net: Math.min(ifWin, ifOpp), ifWin: ifWin, ifOpp: ifOpp, ok: Math.min(ifWin, ifOpp) > 0 };
+  }
+  // Marché exactement contraire à une sélection (pour la couverture), vérifié par les probabilités du modèle.
+  var OPP = { "1": ["N2", "2"], "2": ["1N", "1"], "N": ["12"], "1N": ["2"], "N2": ["1"], "12": ["N"], btts: ["nbtts"], nbtts: ["btts"], h1: ["h2"], h2: ["h1"] };
+  function oppMarket(m, id) {
+    if (!m || !m.markets) return null;
+    var me = m.markets.filter(function (x) { return x.id === id; })[0]; if (!me) return null;
+    var cand = OPP[id] || (/^o(\d+(\.\d)?)$/.test(id) ? ["u" + id.slice(1)] : /^u(\d+(\.\d)?)$/.test(id) ? ["o" + id.slice(1)] : []);
+    for (var i = 0; i < cand.length; i++) {
+      var x = m.markets.filter(function (y) { return y.id === cand[i]; })[0];
+      if (x && Math.abs(x.p + me.p - 1) < 0.015) return x;
+    }
+    return null;
+  }
+
   var api = { BIG5: BIG5, ORDER: ORDER, SHORT: SHORT, LABEL: LABEL, SPORT_OF: SPORT_OF, buildMatches: buildMatches, dayCombos: dayCombos, liveGames: liveGames, liveCombo: liveCombo, topPicks: topPicks, legWhy: legWhy, formText: formText,
-    dayKey: dayKey, ruleOk: ruleOk, learnLog: learnLog, learnRows: learnRows, learnSummary: learnSummary, adjP: adjP, grpOf: grpOf, G_LBL: G_LBL, S_LBL: S_LBL, RULES: { v: RULES_V, value: VALUE_RULE, valMin: VAL_MIN, valMax: VAL_MAX, d12: D12_MIN, drawMax: DRAW_MAX, maxLegs2: MAX_LEGS[2] }, settleCombo: settleCombo, freezeDay: freezeDay, freezeValue: freezeValue, valuePicks: valuePicks, freezeLive: freezeLive, freezeLivePicks: freezeLivePicks, historyStats: historyStats };
+    dayKey: dayKey, ruleOk: ruleOk, learnLog: learnLog, learnRows: learnRows, learnSummary: learnSummary, adjP: adjP, grpOf: grpOf, G_LBL: G_LBL, S_LBL: S_LBL, RULES: { v: RULES_V, value: VALUE_RULE, valMin: VAL_MIN, valMax: VAL_MAX, d12: D12_MIN, drawMax: DRAW_MAX, maxLegs2: MAX_LEGS[2] }, settleCombo: settleCombo, freezeDay: freezeDay, freezeValue: freezeValue, valuePicks: valuePicks, freezeLive: freezeLive, freezeLivePicks: freezeLivePicks, historyStats: historyStats, stakePlan: stakePlan, planReturn: planReturn, hedgePlan: hedgePlan, oppMarket: oppMarket };
   if (isNode) module.exports = api; else root.PronoEngine = api;
 })(this);
 
@@ -2023,7 +2141,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     var m = l.m, live = !!m.g;
     var when = live ? "En direct" : cap(fShort.format(new Date(m.t))) + " " + fTime.format(new Date(m.t));
     var key = live ? (m.pre ? m.pre.key : m.key) : m.key;
-    return '<li class="leg"><div class="leg-top"><div><div class="leg-ctx"><span class="tag' + (live ? " livetag" : "") + '">' + E.SHORT[(live ? m.g.comp : m.comp)] + "</span>" + esc(when) + '</div><div class="leg-match">' + esc(m.hn + " – " + m.an) + '</div><div class="leg-pick">' + esc(l.label) + '</div></div>' +
+    return '<li class="leg"><div class="leg-top"><div><div class="leg-ctx">' + (typeof d === "number" ? '<span class="legno" title="Sélection n°' + (d + 1) + '">' + (d + 1) + "</span>" : "") + '<span class="tag' + (live ? " livetag" : "") + '">' + E.SHORT[(live ? m.g.comp : m.comp)] + "</span>" + esc(when) + '</div><div class="leg-match">' + esc(m.hn + " – " + m.an) + '</div><div class="leg-pick">' + esc(l.label) + '</div></div>' +
       '<div class="leg-p"><strong>' + pct(l.p) + "</strong><small>cote juste " + odds(l.p) + "</small></div></div>" +
       whyBlock(l.why, live ? null : m.note && m.note.ana) +
       (live || !l.mk ? "" : xbInput(legKeyLive(l), l.p, { comp: m.comp, fid: m.fid || "", h: m.h, a: m.a, t: m.t, mk: l.mk.id, label: l.label, hn: m.hn, an: m.an }, autoOf(l.mk))) +
@@ -2039,7 +2157,115 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       '<p class="pass">Passe environ <b>' + freq(cb.prob) + "</b> selon le modèle (" + pct(cb.prob) + ").</p></div>" +
       '<ol class="legs">' + cb.legs.map(legHTML).join("") + "</ol>" +
       (isLive ? "" : comboXb(cb.legs.map(legKeyLive), cb.prob, cb.odds, cb.legs.map(function (l) { return autoOf(l.mk); }))) +
+      (isLive ? "" : stakeHTML("c-" + title, cb.legs.map(stakeLegLive), null)) +
       '<div class="combo-foot">' + sub + "</div></section>";
+  }
+
+  // ---------- gestion de la mise (demande de Landry du 24 oct. 2026) ----------
+  // La bankroll reste sur l'appareil (stockage local) ; mise par combiné = bankroll × % choisi.
+  var BK = { amt: null, pct: 2 }, BK_PCTS = [1, 1.5, 2, 2.5, 3], stkOpen = {};
+  try { var bk0 = JSON.parse(localStorage.getItem("pb5-bk") || "{}"); if (bk0.amt > 0) BK.amt = bk0.amt; if (BK_PCTS.indexOf(bk0.pct) >= 0) BK.pct = bk0.pct; } catch (e) {}
+  function saveBk() { try { localStorage.setItem("pb5-bk", JSON.stringify(BK)); } catch (e) {} }
+  function num(x) { return Math.round(x).toLocaleString("fr-FR").replace(/\u202f/g, "\u00a0"); }
+  function fcfa(x) { return num(x) + " FCFA"; }
+  function signed(x) { var r = Math.round(x); return (r > 0 ? "+" : r < 0 ? "−" : "") + num(Math.abs(r)); }
+  function pctBk(v) { return dec(v, v % 1 ? 1 : 0) + " %"; }
+  function stakeBase() { return BK.amt ? Math.max(100, Math.round(BK.amt * BK.pct / 100 / 50) * 50) : 1000; }
+  function legNums(ix) { return ix.map(function (i) { return "n°" + (i + 1); }).join(" + "); }
+  // legs : [{o, d (cote recalculée), est (cote estimée par le modèle), p, t, opp: {label, o} | null}] ; res : états des sélections (combiné figé) ou null
+  function stakeHTML(id, legs, res) {
+    var n = legs.length; if (!n) return "";
+    var S = stakeBase(), L = legs.map(function (l) { return { o: l.o, p: l.p }; }), pl = E.stakePlan(L, S, 10);
+    var settled = !!res && res.every(function (r) { return r === "won" || r === "lost" || r === "void"; });
+    var lostAny = !!res && res.some(function (r) { return r === "lost"; });
+    var NAME = { combo: n === 1 ? "Pari simple" : "Tout en combiné", sys: "Système " + (n - 1) + "/" + n, single: n + " paris simples" };
+    var TAG = { combo: n === 1 ? "" : "Gain maximal", sys: "Équilibré", single: "Perte minimale" };
+    var head = BK.amt ? "Mise conseillée : <b>" + fcfa(S) + "</b> (" + pctBk(BK.pct) + " de ta bankroll de " + fcfa(BK.amt) + ")." :
+      "Exemple pour une mise de <b>1 000 FCFA</b>. Indique ta bankroll dans «\u00a0Ma bankroll\u00a0», plus bas, pour des montants à ta mesure.";
+    var body = '<p class="stk-head">' + head + "</p>";
+    pl.opts.forEach(function (op) {
+      var bets = op.id === "combo" ? "<b>" + num(S) + "</b> sur le combiné (cote " + dec(pl.O, 2) + ")" :
+        (op.id === "sys" ? (n - 1 === 2 ? "3 doubles" : n + " combinés de " + (n - 1)) : "Un pari par sélection") + " : " + op.bets.map(function (b) {
+          return legNums(b.ix) + " → <b>" + num(b.s) + "</b> (cote " + dec(b.o, 2) + ")";
+        }).join(" · ");
+      body += '<div class="stk-opt"><div class="stk-h">' + NAME[op.id] + (TAG[op.id] ? '<span class="stk-tag' + (op.id === "single" ? " min" : "") + '">' + TAG[op.id] + "</span>" : "") + "</div>" +
+        '<div class="stk-bets">' + bets + "</div>";
+      if (settled) {
+        var r = E.planReturn(op, L, res);
+        body += '<div class="stk-res">Résultat : ' + (r < 0.5 ? "mise perdue" : "récupéré " + fcfa(r)) + ' <span class="' + (r - S >= 0 ? "up" : "dn") + '">(' + signed(r - S) + ")</span></div>";
+      } else if (n > 1) {
+        body += '<div class="stk-grid"><div><span class="k">Tout passe</span><span class="v">' + num(op.all) + '</span><span class="o up">' + signed(op.all - S) + "</span></div>" +
+          '<div><span class="k">Un prono perd</span><span class="v">' + num(op.oneMin) + '</span><span class="o ' + (op.oneMin - S >= 0 ? "up" : "dn") + '">' + signed(op.oneMin - S) + "</span></div>" +
+          '<div><span class="k">Risque de tout perdre</span><span class="v">' + (op.pZero < 0.005 ? "&lt;\u00a01\u00a0%" : pct(op.pZero)) + '</span><span class="o">des cas</span></div></div>';
+      }
+      body += "</div>";
+    });
+    if (!settled && n > 1) {
+      var sys = pl.opts.filter(function (o) { return o.id === "sys"; })[0], sg = pl.opts.filter(function (o) { return o.id === "single"; })[0];
+      body += '<p class="stk-tip">' + (sys ? "Pour limiter la perte si un prono tombe : le <b>système " + (n - 1) + "/" + n + "</b>. Si un seul prono perd, tu récupères environ " + pct(sys.oneMin / S) + " de ta mise ; si tout passe, tu gagnes " + signed(sys.all - S) + " FCFA." :
+        "Pour limiter la perte dès le départ : les <b>2 paris simples</b> (tu récupères environ " + pct(sg.oneMin / S) + " de ta mise si un prono perd). Pour garder la cote " + dec(pl.O, 2) + " : le combiné, puis la couverture du dernier match ci-dessous si le premier passe.") + "</p>";
+      // couverture du dernier match (seulement si le dernier coup d'envoi est unique et pas encore donné)
+      var last = 0; legs.forEach(function (l, i) { if (Date.parse(l.t) > Date.parse(legs[last].t)) last = i; });
+      var tie = legs.some(function (l, i) { return i !== last && l.t === legs[last].t; });
+      var lr = res ? res[last] : "pending";
+      if (!tie && !lostAny && lr === "pending" && Date.parse(legs[last].t) > Date.now()) {
+        var others = legs.map(function (l, i) { return i; }).filter(function (i) { return i !== last; });
+        var allIn = !!res && others.every(function (i) { return res[i] === "won" || res[i] === "void"; });
+        var dl = new Date(legs[last].t), opp = legs[last].opp, hp = opp ? E.hedgePlan(S, pl.O, opp.o, 10) : null;
+        var cond = allIn ? "<b>C'est le moment</b> : " + legNums(others) + (others.length > 1 ? " sont passées" : " est passée") + ". " : "Si " + legNums(others) + (others.length > 1 ? " passent" : " passe") + ", ";
+        var when = "avant " + (fDay.format(dl) === fDay.format(new Date()) ? "" : fShort.format(dl) + " ") + fTime.format(dl);
+        if (hp && hp.ok) body += '<p class="stk-tip' + (allIn ? " now" : "") + '">🛡️ <b>Couverture du dernier match</b> (n°' + (last + 1) + ") — option «\u00a0Tout en combiné\u00a0» : " + cond + (allIn ? "M" : "m") + "ise <b>" + fcfa(hp.H) + "</b> sur «\u00a0" + esc(opp.label) + "\u00a0» (cote 1xBet " + (opp.d ? "≈ " : "") + dec(opp.o, 2) + ") " + when +
+          ". Tu gagnes alors au moins <b>" + signed(hp.net) + " FCFA</b> quel que soit le résultat, au lieu de " + signed(S * pl.O - S) + " ou " + signed(-S) + ". Si la cote a changé : mise = " + num(S * pl.O) + " ÷ la nouvelle cote.</p>";
+        else body += '<p class="stk-tip">🛡️ <b>Couverture du dernier match</b> (n°' + (last + 1) + ") — option «\u00a0Tout en combiné\u00a0» : " + cond + (allIn ? "M" : "m") + "ise " + num(S * pl.O) + " ÷ la cote 1xBet de l'issue contraire sur ce match, " + when + " : le gain est alors assuré quel que soit le résultat (si cette cote dépasse " + dec(pl.O / (pl.O - 1), 2) + ").</p>";
+      }
+      body += '<p class="stk-note">Selon le modèle : tout passe ' + pct(pl.pAll) + ", un seul prono perd " + pct(pl.pOne) + ", deux ou plus " + pct(pl.pMore) + ". Aucune répartition ne supprime la perte : elle la réduit, en échange d'un gain plus petit quand tout passe. Mises arrondies à 10 FCFA, cotes 1xBet du matin" +
+        (legs.some(function (l) { return l.d; }) ? " (≈ : recalculée)" : "") + (legs.some(function (l) { return l.est; }) ? " ; sans cote 1xBet, cote juste du modèle" : "") + ".</p>";
+    } else if (settled && n > 1) body += '<p class="stk-note">Montants calculés avec les cotes 1xBet du matin, pour une mise de ' + fcfa(S) + ".</p>";
+    var ttl = settled ? "💰 Gestion de la mise : ce qu'aurait donné chaque répartition" : "💰 Comment miser sans tout perdre si un prono tombe";
+    return '<div class="stkwrap"><details class="ana stk" data-stk="' + esc(id) + '"' + (stkOpen[id] ? " open" : "") + "><summary>" + ttl + "</summary>" + body + "</details></div>";
+  }
+  function stakeLegFrozen(l) {
+    var co = coteOf(legKeyFrozen(l), frozenAuto(l)), m = state.cache && state.cache.byKey[l.comp + ":" + l.h + "-" + l.a + ":" + l.t];
+    var op = m ? E.oppMarket(m, l.id) : null, oo = op ? coteOf(oddsKey(l.comp, l.fid, l.h, l.a, l.t, op.id), autoOf(op)) : null;
+    return { o: co ? co.c : 1 / l.p, d: !!(co && co.d), est: !co, p: l.p, t: l.t, opp: op && oo ? { label: op.label, o: oo.c, d: !!oo.d } : null };
+  }
+  function stakeLegLive(l) {
+    var m = l.m, co = coteOf(legKeyLive(l), autoOf(l.mk)), op = E.oppMarket(m, l.mk.id), oo = op ? coteOf(oddsKey(m.comp, m.fid, m.h, m.a, m.t, op.id), autoOf(op)) : null;
+    return { o: co ? co.c : 1 / l.p, d: !!(co && co.d), est: !co, p: l.p, t: m.t, opp: op && oo ? { label: op.label, o: oo.c, d: !!oo.d } : null };
+  }
+  // ce qu'auraient donné les 3 répartitions sur les combinés du jour déjà terminés
+  function stakeBacktest(S) {
+    var t = { combo: 0, sys: 0, single: 0 }, n = 0, first = null;
+    state.history.forEach(function (h) {
+      if (h.kind !== "jour" || h.none || !h.legs || !h.legs.length) return;
+      var s = E.settleCombo(h, state.docs, Date.now()); if (s.status !== "won" && s.status !== "lost") return;
+      var L = h.legs.map(function (l) { var c = frozenAuto(l); return { o: c ? c.c : 1 / l.p, p: l.p }; }), pl = E.stakePlan(L, S, 10), res = s.legs.map(function (x) { return x.r; }), r = {};
+      pl.opts.forEach(function (op) { r[op.id] = E.planReturn(op, L, res) - S; });
+      if (r.single == null) r.single = r.combo; if (r.sys == null) r.sys = r.single;
+      t.combo += r.combo; t.sys += r.sys; t.single += r.single; n++;
+      if (!first || h.day < first) first = h.day;
+    });
+    return n ? { n: n, first: first, t: t } : null;
+  }
+  function bankrollHTML() {
+    var S = stakeBase(), bt = stakeBacktest(S);
+    var h = '<section class="kpi"><h3 class="sect-title" style="margin:0">💰 Ma bankroll</h3>' +
+      '<div class="bkrow"><label class="xb"><span>Bankroll</span><input id="bk-amt" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done" placeholder="ex. 50 000" value="' + (BK.amt ? num(BK.amt) : "") + '"><span>FCFA</span></label>' +
+      '<label class="xb"><span>Mise par combiné</span><select id="bk-pct">' + BK_PCTS.map(function (v) { return '<option value="' + v + '"' + (v === BK.pct ? " selected" : "") + ">" + pctBk(v) + "</option>"; }).join("") + "</select></label></div>" +
+      '<p class="note" style="margin:0;font-size:13.5px">' + (BK.amt ? "Mise par combiné : <b>" + fcfa(S) + "</b> · au plus <b>" + fcfa(BK.amt * 0.05) + "</b> par jour (5\u00a0% de la bankroll)." : "Indique ta bankroll : chaque combiné affiche alors sa mise et la répartition à jouer.") + "</p>" +
+      '<ul class="bkrules">' +
+      "<li>La bankroll, c'est l'argent que tu peux perdre sans gêne, <b>mis à part du reste</b>.</li>" +
+      "<li><b>Mise fixe</b> : 1 à 3\u00a0% de la bankroll par combiné (2\u00a0% conseillé), jamais plus de 5\u00a0% par jour. Mets ta bankroll à jour chaque semaine : les mises suivent, à la hausse comme à la baisse.</li>" +
+      "<li><b>Jamais de martingale</b> (doubler la mise après une perte) ni de pari pour «\u00a0se refaire\u00a0» : c'est ce qui vide une bankroll le plus vite.</li>" +
+      "<li>Si la bankroll baisse de 20\u00a0% dans le mois, <b>passe à 1\u00a0%</b> par combiné jusqu'au mois suivant.</li>" +
+      "<li>Pour qu'un prono perdu ne coûte pas toute la mise : <b>système</b> ou <b>paris simples</b> (détail dans chaque combiné), ou <b>couverture du dernier match</b> quand les autres sont passés.</li></ul>";
+    if (bt) h += '<p class="note" style="margin:0;font-size:13.5px">Sur les ' + bt.n + " combinés terminés depuis le " + fDay.format(new Date(bt.first + "T12:00:00Z")).replace(/^\S+ /, "") + ", à " + fcfa(S) + " chacun (cotes 1xBet du matin) : tout en combiné <b class=\"" + (bt.t.combo >= 0 ? "up" : "dn") + "\">" + signed(bt.t.combo) + "</b>, système <b class=\"" + (bt.t.sys >= 0 ? "up" : "dn") + "\">" + signed(bt.t.sys) + "</b>, paris simples <b class=\"" + (bt.t.single >= 0 ? "up" : "dn") + "\">" + signed(bt.t.single) + "</b> FCFA. Encore peu de jours : à suivre.</p>";
+    return h + '<p class="note" style="margin:0">Ta bankroll reste enregistrée sur cet appareil seulement.</p></section>';
+  }
+  function setBk(amtRaw, pctRaw) {
+    if (amtRaw != null) { var a = parseInt(String(amtRaw).replace(/[^0-9]/g, ""), 10); BK.amt = a >= 1000 ? Math.min(a, 1e9) : null; }
+    if (pctRaw != null && BK_PCTS.indexOf(+pctRaw) >= 0) BK.pct = +pctRaw;
+    saveBk(); render();
   }
   // ---------- combinés archivés ----------
   var ST_LBL = { won: "Gagné", lost: "Perdu", live: "En cours", pending: "À venir", void: "Annulé" };
@@ -2062,9 +2288,9 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     var m = state.cache && state.cache.byKey[l.comp + ":" + l.h + "-" + l.a + ":" + l.t];
     return m && m.markets ? autoOf(m.markets.filter(function (x) { return x.id === l.id; })[0]) : null;
   }
-  function frozenLegHTML(l, r) {
+  function frozenLegHTML(l, r, i) {
     var key = l.comp + ":" + l.h + "-" + l.a + ":" + l.t, has = state.cache && state.cache.byKey[key], d = new Date(l.t), au = frozenAuto(l), co = coteOf(legKeyFrozen(l), au);
-    return '<li class="leg"><div class="leg-top"><div><div class="leg-ctx"><span class="tag">' + E.SHORT[l.comp] + "</span>" + esc(cap(fShort.format(d)) + " " + fTime.format(d)) + " " + legBadge(r) + '</div><div class="leg-match">' + esc(l.hn + " – " + l.an) + '</div><div class="leg-pick">' + esc(l.label) + "</div></div>" +
+    return '<li class="leg"><div class="leg-top"><div><div class="leg-ctx">' + (typeof i === "number" ? '<span class="legno" title="Sélection n°' + (i + 1) + '">' + (i + 1) + "</span>" : "") + '<span class="tag">' + E.SHORT[l.comp] + "</span>" + esc(cap(fShort.format(d)) + " " + fTime.format(d)) + " " + legBadge(r) + '</div><div class="leg-match">' + esc(l.hn + " – " + l.an) + '</div><div class="leg-pick">' + esc(l.label) + "</div></div>" +
       '<div class="leg-p"><strong>' + pct(l.p) + "</strong><small>cote juste " + odds(l.p) + "</small></div></div>" +
       whyBlock(l.why, l.ana || anaOfKey(key)) +
       (r.r === "pending" ? xbInput(legKeyFrozen(l), l.p, { comp: l.comp, fid: l.fid || "", h: l.h, a: l.a, t: l.t, mk: l.id, label: l.label, hn: l.hn, an: l.an }, au) + tgButtons(tgPayload(l.comp, l.t, l.hn, l.an, l.label, co, ((l.ana || anaOfKey(key) || {}).why) || l.why, has && has.tn)) :
@@ -2082,8 +2308,9 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     var xo = comboCote(h.legs.map(legKeyFrozen), h.legs.map(frozenAuto));
     return '<section class="combo' + (s.status === "won" ? " done-won" : s.status === "lost" ? " done-lost" : "") + '"><div class="combo-head"><div><div class="eyebrow-row"><span class="eyebrow">' + title + "</span>" + '<span class="badge ' + cs.k + '">' + cs.t + "</span></div><h3>" + h.legs.length + " sélection" + (h.legs.length > 1 ? "s" : "") + '</h3></div>' + oddsBox(h.odds, xo) +
       '<p class="pass">' + pass + "</p>" + (h.syn ? '<p class="syn">' + esc(h.syn) + "</p>" : "") + "</div>" +
-      '<ol class="legs">' + h.legs.map(function (l, i) { return frozenLegHTML(l, s.legs[i]); }).join("") + "</ol>" +
+      '<ol class="legs">' + h.legs.map(function (l, i) { return frozenLegHTML(l, s.legs[i], i); }).join("") + "</ol>" +
       comboXb(h.legs.map(legKeyFrozen), h.prob, h.odds, h.legs.map(frozenAuto)) +
+      stakeHTML(h.id, h.legs.map(stakeLegFrozen), s.legs.map(function (x) { return x.r; })) +
       '<div class="combo-foot">' + sub + "</div></section>";
   }
   var RULES_TXT = "Règles : sélections cotées par 1xBet en priorité ; un match déjà joué dans un combiné n'est pas repris ; une sélection peut être écartée par l'analyse ; « pas de match nul » seulement à 85 % et entre deux équipes qui font peu de nuls ; probabilités corrigées par les leçons des résultats passés.";
@@ -2128,6 +2355,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       html += comboHTML(dc.combos[0], "Combiné sûr · cote 1,5", SUB15);
       html += comboHTML(dc.combos[1], "Combiné · cote 2", SUB2);
     }
+    html += bankrollHTML();
     if (state.sport === "all") html += valueList(c);
     var lives = c.lives.filter(function (l) { return keepLive(l); });
     if (state.live && lives.some(function (l) { return !l.finished; })) {
@@ -2287,7 +2515,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       '<p class="legal">Ce sont des estimations, pas des certitudes : un combiné « sûr » à 1,5 perd environ une fois sur trois. Fixe-toi une limite et ne mise jamais plus que ce que tu peux perdre.</p></div>';
   }
 
-  function typing() { var a = document.activeElement; return !!(a && a.matches && a.matches("input[data-xb]")); }
+  function typing() { var a = document.activeElement; return !!(a && a.matches && a.matches("input[data-xb], #bk-amt")); }
   function render() {
     if (typing()) { state.renderLater = true; return; }
     renderChips();
@@ -2487,7 +2715,14 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       render(); if (state.openKey) openSheet(state.openKey, true);
     });
   }
-  document.addEventListener("change", function (e) { if (e.target.matches && e.target.matches("input[data-xb]")) saveOdds(e.target); });
+  document.addEventListener("change", function (e) {
+    if (!e.target.matches) return;
+    if (e.target.matches("input[data-xb]")) saveOdds(e.target);
+    else if (e.target.id === "bk-amt") setBk(e.target.value, null);
+    else if (e.target.id === "bk-pct") setBk(null, e.target.value);
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Enter" && e.target.id === "bk-amt") { e.preventDefault(); e.target.blur(); } });
+  document.addEventListener("toggle", function (e) { var d = e.target; if (d.matches && d.matches("details[data-stk]")) stkOpen[d.getAttribute("data-stk")] = d.open; }, true);
   document.addEventListener("keydown", function (e) { if (e.key === "Enter" && e.target.matches && e.target.matches("input[data-xb]")) { e.preventDefault(); e.target.blur(); } });
   document.addEventListener("focusout", function (e) {
     if (!(e.target.matches && e.target.matches("input[data-xb]"))) return;
