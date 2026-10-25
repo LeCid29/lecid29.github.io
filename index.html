@@ -306,6 +306,28 @@ details p { margin: 8px 0 0; max-width: 64ch; }
 .pills { display: flex; gap: 4px; }
 .pill { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 15px; }
 .pill.V { background: var(--home); color: var(--surface); } .pill.N { background: var(--draw); color: var(--ink); } .pill.D { background: var(--warn); color: var(--surface); }
+.calgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+@media (min-width: 760px) { .calgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.cal { display: grid; gap: 6px; min-width: 0; }
+.cal-h { display: grid; gap: 1px; min-width: 0; }
+.cal-h b { font-family: var(--font-display); font-weight: 700; font-size: 17px; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-h span { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cal-m { font-size: 12.5px; font-weight: 600; color: var(--muted); text-transform: capitalize; margin-top: 2px; }
+.cal-g { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal-wd { font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; padding-bottom: 1px; }
+.calday { min-height: 40px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--muted); display: grid; place-content: center; justify-items: center; gap: 1px; padding: 2px 0; font: inherit; line-height: 1; }
+button.calday { cursor: pointer; }
+.calday .d { font-family: var(--font-display); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.calday .o { font-size: 10px; font-variant-numeric: tabular-nums; }
+.calday.w { background: var(--pitch); color: var(--bg); }
+.calday.l { background: var(--live); color: var(--bg); }
+.calday.p { border: 1px dashed var(--muted); color: var(--ink); }
+.calday.lv { border: 2px solid var(--yellow); color: var(--ink); }
+.calday.n, .calday.v { background: var(--surface-2); border-color: var(--line); }
+.calday.x { opacity: .4; }
+.cal-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--muted); }
+.cal-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; border: 1px solid transparent; }
+.hist { scroll-margin-top: 140px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .cell { background: var(--surface-2); border-radius: 10px; padding: 9px 8px; text-align: center; display: grid; gap: 2px; }
 .cell .k { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -2541,7 +2563,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
     var h = row.hd, s = row.s, cs = comboStatus(s), at = new Date(h.at);
     var title = h.kind === "pick" ? "Pronostic live" : h.kind === "value" ? "Cote intéressante · 1xBet" : h.kind === "live" ? "Combiné live" : h.pro ? "Combiné avis des pros" : h.target === 2 ? "Combiné cote 2" : "Combiné sûr cote 1,5";
     var meta = (h.kind === "pick" || h.kind === "live" ? "Figé à " + fTime.format(at) + " d'après " + (h.kind === "pick" ? "le score" : "les scores") + " en direct" : "Figé le " + fUpd.format(at)) + " · le modèle donnait " + pct(h.prob) + (h.kind === "value" ? ", la cote 1xBet " + pct(1 / h.odds) : "");
-    return '<article class="hist"><div class="hist-head"><span class="ttl">' + title + " · " + dec(h.odds, 2) + '</span><span class="badge ' + cs.k + '">' + cs.t + '</span><span class="meta">' + meta + "</span></div>" +
+    return '<article class="hist" id="h-' + esc(h.id) + '"><div class="hist-head"><span class="ttl">' + title + " · " + dec(h.odds, 2) + '</span><span class="badge ' + cs.k + '">' + cs.t + '</span><span class="meta">' + meta + "</span></div>" +
       h.legs.map(function (l, i) {
         var r = s.legs[i], d = new Date(l.t);
         return '<div class="hleg"><span class="lb">' + esc(l.label) + '</span><span class="rs">' + legBadge(r) + "<small>" + pct(l.p) + '</small></span><span class="mt">' + E.SHORT[l.comp] + " · " + esc(l.hn + " – " + l.an) + " · " + esc(fShort.format(d)) + (l.at ? " · score au moment du " + (h.kind === "pick" ? "pronostic " : "combiné ") + esc(l.at) : "") + "</span></div>";
@@ -2567,6 +2589,72 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       (L.at ? " Mis à jour le " + fUpd.format(new Date(L.at)) + "." : "") + "</p></section>";
     return html;
   }
+
+  // ---------- calendrier des combinés (demande de Landry du 25 oct. 2026) : vert = gagné, rouge = perdu ----------
+  var fMonth = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" });
+  var CAL_ST = { w: "Gagné", l: "Perdu", p: "À venir", lv: "En cours", v: "Annulé", n: "Pas de combiné valable" };
+  function calType(h) { return h.pro ? "pro" : h.target === 2 ? "2" : "15"; }
+  function calData() {
+    var by = { "15": {}, "2": {}, pro: {} }, first = null, now = Date.now();
+    state.history.forEach(function (h) {
+      if (h.kind !== "jour" || !h.day) return;
+      var t = calType(h), it = { id: h.id, h: h };
+      if (h.none) it.st = "n";
+      else {
+        var s = E.settleCombo(h, state.docs, now);
+        it.st = s.status === "won" ? "w" : s.status === "lost" ? "l" : s.status === "void" ? "v" : s.legs.some(function (r) { return r.r === "live" || r.r === "won"; }) ? "lv" : "p";
+        var xo = h.xbOdds || (h.legs.every(function (l) { return l.xb; }) ? h.legs.reduce(function (a, l) { return a * l.xb; }, 1) : null);
+        it.o = xo || h.odds;
+      }
+      by[t][h.day] = it;
+      if (!first || h.day < first) first = h.day;
+    });
+    return { by: by, first: first, last: E.dayKey(now) };
+  }
+  function calMonths(first, last) {
+    var out = [], y = +first.slice(0, 4), m = +first.slice(5, 7) - 1, ly = +last.slice(0, 4), lm = +last.slice(5, 7) - 1;
+    while (y < ly || (y === ly && m <= lm)) { out.push([y, m]); m++; if (m > 11) { m = 0; y++; } }
+    return out;
+  }
+  function calOne(title, map, first, last, since) {
+    var cnt = { w: 0, l: 0, p: 0, lv: 0, n: 0, v: 0 };
+    Object.keys(map).forEach(function (d) { cnt[map[d].st]++; });
+    var done = cnt.w + cnt.l;
+    var sum = done ? cnt.w + " gagné" + (cnt.w > 1 ? "s" : "") + " · " + cnt.l + " perdu" + (cnt.l > 1 ? "s" : "") + " · " + pct(cnt.w / done) : (cnt.p + cnt.lv ? "premier résultat à venir" : "aucun combiné");
+    var h = '<div class="cal"><div class="cal-h"><b>' + title + "</b><span>" + sum + "</span></div>";
+    calMonths(first, last).forEach(function (ym) {
+      var y = ym[0], m = ym[1], nd = new Date(Date.UTC(y, m + 1, 0)).getUTCDate(), lead = (new Date(Date.UTC(y, m, 1)).getUTCDay() + 6) % 7;
+      h += '<div class="cal-m">' + fMonth.format(new Date(Date.UTC(y, m, 15))) + '</div><div class="cal-g">' +
+        ["L", "M", "M", "J", "V", "S", "D"].map(function (w) { return '<span class="cal-wd" aria-hidden="true">' + w + "</span>"; }).join("");
+      for (var i = 0; i < lead; i++) h += "<span></span>";
+      for (var d = 1; d <= nd; d++) {
+        var key = y + "-" + String(m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0"), it = map[key], td = key === last ? " td" : "";
+        var dl = cap(fShort.format(new Date(key + "T12:00:00Z")));
+        if (it) {
+          var tip = dl + " · " + CAL_ST[it.st] + (it.o ? " · cote " + dec(it.o, 2) : "") + (it.h.legs && it.h.legs.length ? " · " + it.h.legs.map(function (l) { return l.label; }).join(" + ") : it.h.reason ? " · " + it.h.reason : "");
+          var inner = '<span class="d">' + d + '</span><span class="o">' + (it.st === "n" ? "—" : it.o ? dec(it.o, 2) : "") + "</span>";
+          h += it.st === "n" ? '<span class="calday n' + td + '" title="' + esc(tip) + '" aria-label="' + esc(tip) + '">' + inner + "</span>"
+            : '<button type="button" class="calday ' + it.st + td + '" data-goto="h-' + esc(it.id) + '" title="' + esc(tip) + '" aria-label="' + esc(tip) + '">' + inner + "</button>";
+        } else {
+          var out = key < first || key > last || (since && key < since);
+          h += '<span class="calday' + (out ? " x" : "") + td + '"><span class="d">' + d + "</span></span>";
+        }
+      }
+      h += "</div>";
+    });
+    return h + "</div>";
+  }
+  function calendarsHTML() {
+    var c = calData(); if (!c.first) return "";
+    var pros = Object.keys(c.by.pro).sort()[0];
+    return '<section class="kpi"><h3 class="sect-title" style="margin:0">Calendrier des combinés</h3><div class="calgrid">' +
+      calOne("Sûr · cote 1,5", c.by["15"], c.first, c.last) + calOne("Cote 2", c.by["2"], c.first, c.last) +
+      calOne("Avis des pros · 2 à 3", c.by.pro, c.first, c.last, pros || c.last) + "</div>" +
+      '<div class="cal-legend"><span><i style="background:var(--pitch)"></i>Gagné</span><span><i style="background:var(--live)"></i>Perdu</span>' +
+      '<span><i style="border:2px solid var(--yellow)"></i>En cours</span><span><i style="border:1px dashed var(--muted)"></i>À venir</span>' +
+      '<span><i style="background:var(--surface-2);border-color:var(--line)"></i>Pas de combiné</span></div>' +
+      '<p class="note" style="margin:0">Le chiffre sous la date est la cote 1xBet du combiné. Touche un jour pour voir le détail de ses sélections plus bas.</p></section>';
+  }
   function renderBilan() {
     var html = '<p class="intro">Chaque matin, les combinés du jour sont figés (cote 1,5, cote 2 et, depuis le 25 octobre, l\'avis des pros). Chaque actualisation du live fige aussi le combiné live et le pronostic live de chaque match en cours (le premier affiché). Les 5 meilleures cotes 1xBet « intéressantes » du jour sont figées elles aussi, pour vérifier si elles paient. Tout passe ensuite en gagné ou perdu d\'après les résultats officiels.</p>';
     if (!state.history.length) return html + '<div class="state"><strong>Le suivi démarre</strong>Les premiers combinés archivés apparaîtront ici après la prochaine mise à jour, puis leur résultat dès la fin des matchs.</div>';
@@ -2577,6 +2665,7 @@ details p { margin: 8px 0 0; max-width: 64ch; }
       "</span></div>" +
       '<div class="grid4">' + rateCell("Sûr · 1,5", g.j15) + rateCell("Cote 2", g.j2) + rateCell("Avis des pros", g.jp) + rateCell("Live", g.live) + "</div>" +
       '<p class="note" style="margin:0">Sélections des combinés gagnées : ' + (st.legs.n ? st.legs.won + " sur " + st.legs.n + " (" + pct(st.legs.won / st.legs.n) + ")" : "aucune terminée") + (st.pending ? " · " + st.pending + " combiné" + (st.pending > 1 ? "s" : "") + " en attente" : "") + ".</p></section>";
+    html += calendarsHTML();
     var g2 = g.v2;
     if (g2 && (g2.n || g2.none || g2.since)) {
       html += '<section class="kpi"><div class="kpi-main"><span class="big' + (g2.n ? "" : " none") + '" style="font-size:40px">' + (g2.n ? pct(g2.rate) : "—") + '</span><span class="txt"><b>Nouvelles règles (depuis le ' + esc(fShort.format(new Date(g2.since + "T12:00:00Z"))) + ") : " +
@@ -2842,6 +2931,8 @@ details p { margin: 8px 0 0; max-width: 64ch; }
   // ---------- événements ----------
   document.addEventListener("click", function (e) {
     var t = e.target;
+    var go = t.closest && t.closest("[data-goto]");
+    if (go) { var el = document.getElementById(go.getAttribute("data-goto")); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     var tb = t.closest && t.closest(".tgbtn[data-tg]");
     if (tb) {
       var o = {}; try { o = JSON.parse(tb.getAttribute("data-tg")); } catch (x) {}
