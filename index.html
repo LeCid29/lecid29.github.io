@@ -284,6 +284,8 @@ details p { margin: 8px 0 0; max-width: 64ch; }
 .notebox { display: grid; gap: 8px; }
 .abs { display: flex; flex-wrap: wrap; gap: 6px; }
 .abs span { background: var(--warn-soft); color: var(--ink); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; }
+.sq { margin: 8px 0 0; font-size: 13.5px; }
+.sq p { margin: 2px 0; }
 .src { font-size: 12px; color: var(--muted); }
 .rows { display: grid; gap: 8px; }
 .row { display: grid; grid-template-columns: minmax(0, 1fr) 48px 64px; gap: 10px; align-items: center; font-size: 14px; }
@@ -1066,7 +1068,7 @@ button.calday { cursor: pointer; }
 
 
   // ---------- cotes 1xBet relevées automatiquement (The Odds API) ----------
-  // xb = { at, r: [c1, cN, c2] ou [c1, c2], t: [ligne, plus, moins], s: [handicap domicile, cote domicile, cote extérieur] }
+  // xb = { at, r: [c1, cN, c2] ou [c1, c2], t: [ligne, plus, moins], s: [handicap domicile, cote domicile, cote extérieur], b: [les deux marquent oui, non] }
   // NHL : r est le 1N2 du temps réglementaire (60 min) ; s à 0 = remboursé si égalité après 60 min.
   function r2(x) { return Math.round(x * 100) / 100; }
   function dcOdds(a, b) { return r2(1 / (1 / a + 1 / b)); }
@@ -1121,6 +1123,8 @@ button.calday { cursor: pointer; }
       if (!ha && ph != null) { ha = { id: "xa" + (-Lh), label: m.an + " " + sg(-Lh) + " points", p: coverAt(m, "a", -Lh), grp: "hcp", rule: { t: "hcp", side: "a", l: -Lh }, extra: 1 }; m.markets.push(ha); }
       set(hh, xb.s[1]); set(ha, xb.s[2]);
     }
+    // « Les deux équipes marquent » : xb.b = [cote Oui, cote Non] (requête par match, combiné des pros ; règles v4)
+    if (xb.b && m.sport === "foot") { set(byId.btts, xb.b[0]); set(byId.nbtts, xb.b[1]); }
     m.xbAt = xb.at || null;
     return m;
   }
@@ -1407,8 +1411,13 @@ button.calday { cursor: pointer; }
   //    (et < +10 points). Sans elle : sélections cotées par 1xBet en priorité, puis toutes, les plus probables d'abord (comme avant) ;
   // 5. 2 sélections au plus pour le combiné à cote 2.
   // Version 3 = règles 1, 2, 3, 5 + leçons des résultats passés.
+  // Version 4 (27 oct. 2026, choix de Landry après l'analyse de toutes les sélections perdantes) :
+  //   - contrôle strict des effectifs : note.sq = {h: {out: [titulaires absents], back: [titulaires de retour]}, a: {…}} ;
+  //     veto automatique d'une sélection dès 2 titulaires absents dans l'équipe dont dépend le prono, ou 2 titulaires adverses de retour ;
+  //   - avis des pros : modèle ≥ 60 % et cote 1xBet obligatoire ;
+  //   - « Les deux équipes marquent » suivi par l'apprentissage (journal même sans cote 1xBet).
   var VALUE_RULE = false;
-  var RULES_V = 3, VAL_MIN = 0.03, VAL_MAX = 0.10, D12_MIN = 0.85, DRAW_MAX = 0.25, DRAW_N = 4, MAX_LEGS = { 2: 2 };
+  var RULES_V = 4, VAL_MIN = 0.03, VAL_MAX = 0.10, D12_MIN = 0.85, DRAW_MAX = 0.25, DRAW_N = 4, MAX_LEGS = { 2: 2 };
   // ---------- apprentissage sur les résultats passés (demande de Landry du 23 oct. 2026) ----------
   // Chaque matin, les pronostics cotés par 1xBet sont notés (journal « learnlog ») ; une fois réglés, on compare pour chaque type
   // de pari (sport × marché, puis compétition × marché) les réussites réelles à celles annoncées par le modèle. La correction est
@@ -1428,14 +1437,17 @@ button.calday { cursor: pointer; }
     return rule.t; // hcp, sc, set1
   }
   function learnKey(r) { return r.c + "|" + (r.f ? String(r.f).slice(0, 8) : r.h + "-" + r.a + "-" + String(r.t).slice(0, 10)) + "|" + r.m; }
-  // journal du jour : pronostics des 36 h à venir dont la cote 1xBet est connue (probabilité brute du modèle, 40 % à 95 %)
+  // journal du jour : pronostics des 36 h à venir dont la cote 1xBet est connue, plus « Les deux équipes marquent » / « Une équipe ne marque pas » en foot
+  // même sans cote (règles v4) ; probabilité brute du modèle, 40 % à 95 %
   function learnLog(matches, nowMs) {
     var from = nowMs + 15 * 60e3, to = nowMs + 36 * 3600e3, rows = [];
     matches.forEach(function (m) {
-      var tt = Date.parse(m.t); if (tt < from || tt > to || !m.xbAt) return;
+      var tt = Date.parse(m.t); if (tt < from || tt > to) return;
       m.markets.forEach(function (x) {
-        if (!x.rule || !x.xb || x.p < 0.4 || x.p > 0.95) return;
-        rows.push({ c: m.comp, s: m.sport, f: m.fid || "", h: m.h, a: m.a, t: m.t, m: x.id, r: x.rule, p: Math.round(x.p * 10000) / 10000, o: x.xb });
+        if (!x.rule || x.p < 0.4 || x.p > 0.95) return;
+        var bt = m.sport === "foot" && x.rule.t === "btts"; // règles v4 : suivi même sans cote 1xBet
+        if (!bt && (!m.xbAt || !x.xb)) return;
+        rows.push({ c: m.comp, s: m.sport, f: m.fid || "", h: m.h, a: m.a, t: m.t, m: x.id, r: x.rule, p: Math.round(x.p * 10000) / 10000, o: x.xb || null });
       });
     });
     return rows;
@@ -1503,7 +1515,27 @@ button.calday { cursor: pointer; }
     return "Leçon des résultats passés : " + (pts > 0 ? "+" : "−") + Math.abs(pts || (a.d > 0 ? 1 : -1)) + " point" + (Math.abs(pts) > 1 ? "s" : "") + x + ".";
   }
 
+  // équipe dont dépend le prono : "h", "a" ou null (pas de nul, buts, les deux marquent…)
+  function sideOf(rule) {
+    if (!rule) return null;
+    if (rule.t === "res") return rule.s === "1" || rule.s === "1N" ? "h" : rule.s === "2" || rule.s === "N2" ? "a" : null;
+    if (rule.t === "hcp" || rule.t === "set1") return rule.side || null;
+    return null;
+  }
+  var SQ_MIN = 2;
+  // veto automatique (règles v4) : raison en clair, ou null
+  function sqVeto(m, mk) {
+    var sq = m.note && m.note.sq, s = sideOf(mk && mk.rule);
+    if (!sq || !s) return null;
+    var o = s === "h" ? "a" : "h", me = sq[s] || {}, op = sq[o] || {};
+    var nm = s === "h" ? (m.hn || m.h) : (m.an || m.a), on = s === "h" ? (m.an || m.a) : (m.hn || m.h);
+    var out = me.out || [], back = op.back || [];
+    if (out.length >= SQ_MIN) return out.length + " titulaires absents côté " + nm + " (" + out.join(", ") + ")";
+    if (back.length >= SQ_MIN) return back.length + " titulaires de " + on + " de retour (" + back.join(", ") + ")";
+    return null;
+  }
   function vetoed(m, mk) {
+    if (sqVeto(m, mk)) return true;
     var v = m.note && m.note.veto;
     if (!v) return false;
     if (v === "*" || v === true) return true;
@@ -1577,9 +1609,10 @@ button.calday { cursor: pointer; }
   // modèle en garde-fou, matchs différents des combinés 1,5 et 2, cote 2 à 3) ----------
   // note.pros : [{s: source, sc: "2-1" (score annoncé, domicile-extérieur) | mk: id de marché, u: lien}] — relevé chaque matin (étape 6c).
   // Un marché est « conseillé par les pros » s'il est impliqué par au moins 2 sources et par au moins 2/3 de celles qui se prononcent
-  // sur ce type de pari. Garde-fou du modèle : probabilité (corrigée par les leçons) ≥ 55 %, règle 3 pour « Pas de match nul »,
+  // sur ce type de pari. Garde-fou du modèle : probabilité (corrigée par les leçons) ≥ 60 % (55 % jusqu'au 27 oct.) et cote 1xBet
+  // obligatoire (règles v4), règle 3 pour « Pas de match nul »,
   // vetos de l'analyse, un match déjà joué dans un combiné d'un jour précédent n'est pas repris (règle 1).
-  var PRO_MIN_P = 0.55, PRO_MIN_SRC = 2, PRO_SHARE = 0.66, PRO_LO = 2, PRO_HI = 3, PRO_MAX_LEGS = 4, PRO_TARGET = 2.5;
+  var PRO_NEED_XB = true, PRO_MIN_P = 0.60, PRO_MIN_SRC = 2, PRO_SHARE = 0.66, PRO_LO = 2, PRO_HI = 3, PRO_MAX_LEGS = 4, PRO_TARGET = 2.5;
   function proGrp(id) { return /^(1|2|N|1N|N2|12)$/.test(id) ? "res" : /^[ou]\d/.test(id) ? "tot" : /btts/.test(id) ? "btts" : id; }
   function pickImplies(mk, id) { // un pronostic de marché « mk » implique-t-il le marché « id » ?
     if (mk === id) return true;
@@ -1617,7 +1650,7 @@ button.calday { cursor: pointer; }
       if (!op.list.length) { no("noAgree"); return; }
       var opts = [];
       op.list.forEach(function (c) {
-        var mk = c.mk; if (needXb && !mk.xb) return;
+        var mk = c.mk; if (needXb && !mk.xb) { no("noXb"); return; }
         var p = mk.p; if (mk.id === "12" && m.sport === "foot") p = Math.min(p, prudent12(m));
         var a = adjP(m, mk, p, learn); p = a.p;
         if (mk.id === "12" && m.sport === "foot" && (p < D12_MIN || !fewDraws(m))) { no("d12"); return; }
@@ -1660,14 +1693,14 @@ button.calday { cursor: pointer; }
   // combiné de l'avis des pros, hors matchs exclus (règle 1 + combinés 1,5 et 2 du jour)
   function prosCombo(matches, nowMs, excl, learn, hours0) {
     var from = nowMs + 15 * 60e3, hrs = [hours0 || 24, 36, 48].filter(function (h, i, a) { return h >= (hours0 || 24) && a.indexOf(h) === i; }), rej = {}, found = null, hUsed = hrs[0], nCand = 0;
-    for (var pi = 0; pi < 2 && !found; pi++) for (var i = 0; i < hrs.length && !found; i++) {
+    for (var pi = 0; pi < (PRO_NEED_XB ? 1 : 2) && !found; pi++) for (var i = 0; i < hrs.length && !found; i++) {
       rej = {}; var g = proCands(matches, from, nowMs + hrs[i] * 3600e3, excl, learn, pi === 0, rej);
       nCand = g.length; hUsed = hrs[i]; found = proBuild(g);
     }
     if (!found) {
       return { target: PRO_TARGET, pro: 1, legs: [], prob: 0, odds: 0, hours: hUsed, rej: rej,
-        none: nCand ? "Les pronostics d'experts concordants (2 sources au moins, validés par le modèle) ne permettent pas d'atteindre une cote de 2 à 3 sur les " + hUsed + " prochaines heures."
-          : "Pas assez de pronostics d'experts concordants (2 sources au moins, validés par le modèle) sur les " + hUsed + " prochaines heures." };
+        none: nCand ? "Les pronostics d'experts concordants (2 sources au moins, validés par le modèle et cotés par 1xBet) ne permettent pas d'atteindre une cote de 2 à 3 sur les " + hUsed + " prochaines heures."
+          : "Pas assez de pronostics d'experts concordants (2 sources au moins, validés par le modèle et cotés par 1xBet) sur les " + hUsed + " prochaines heures." };
     }
     found.target = PRO_TARGET; found.pro = 1; found.hours = hUsed; found.rej = rej;
     return found;
@@ -2115,7 +2148,7 @@ button.calday { cursor: pointer; }
   }
 
   var api = { BIG5: BIG5, ORDER: ORDER, SHORT: SHORT, LABEL: LABEL, SPORT_OF: SPORT_OF, buildMatches: buildMatches, dayCombos: dayCombos, liveGames: liveGames, liveCombo: liveCombo, topPicks: topPicks, legWhy: legWhy, formText: formText,
-    dayKey: dayKey, ruleOk: ruleOk, learnLog: learnLog, learnRows: learnRows, learnSummary: learnSummary, adjP: adjP, grpOf: grpOf, G_LBL: G_LBL, S_LBL: S_LBL, RULES: { v: RULES_V, value: VALUE_RULE, valMin: VAL_MIN, valMax: VAL_MAX, d12: D12_MIN, drawMax: DRAW_MAX, maxLegs2: MAX_LEGS[2] }, settleCombo: settleCombo, freezeDay: freezeDay, freezeValue: freezeValue, valuePicks: valuePicks, freezeLive: freezeLive, freezeLivePicks: freezeLivePicks, historyStats: historyStats, proOpinion: proOpinion, proWhy: proWhy, PRO: { lo: PRO_LO, hi: PRO_HI, minP: PRO_MIN_P, minSrc: PRO_MIN_SRC, share: PRO_SHARE }, stakePlan: stakePlan, planReturn: planReturn, hedgePlan: hedgePlan, oppMarket: oppMarket, coverPlan: coverPlan, coverPlanN: coverPlanN };
+    dayKey: dayKey, ruleOk: ruleOk, learnLog: learnLog, learnRows: learnRows, learnSummary: learnSummary, adjP: adjP, grpOf: grpOf, G_LBL: G_LBL, S_LBL: S_LBL, RULES: { v: RULES_V, value: VALUE_RULE, valMin: VAL_MIN, valMax: VAL_MAX, d12: D12_MIN, drawMax: DRAW_MAX, maxLegs2: MAX_LEGS[2] }, settleCombo: settleCombo, freezeDay: freezeDay, freezeValue: freezeValue, valuePicks: valuePicks, freezeLive: freezeLive, freezeLivePicks: freezeLivePicks, historyStats: historyStats, proOpinion: proOpinion, proWhy: proWhy, PRO: { lo: PRO_LO, hi: PRO_HI, minP: PRO_MIN_P, minSrc: PRO_MIN_SRC, share: PRO_SHARE, needXb: PRO_NEED_XB }, sqVeto: sqVeto, sideOf: sideOf, SQ_MIN: SQ_MIN, stakePlan: stakePlan, planReturn: planReturn, hedgePlan: hedgePlan, oppMarket: oppMarket, coverPlan: coverPlan, coverPlanN: coverPlanN };
   if (isNode) module.exports = api; else root.PronoEngine = api;
 })(this);
 
@@ -2125,6 +2158,20 @@ button.calday { cursor: pointer; }
   "use strict";
   document.documentElement.lang = "fr";
   var E = window.PronoEngine, S = window.PronoSports;
+  // contrôle des effectifs (règles v4 du 27 oct. 2026) : titulaires absents et de retour, et sélections écartées des combinés
+  function sqHTML(m) {
+    var sq = m.note.sq || {}, h = '<div class="sq"><p><b>Effectifs (titulaires)</b></p>';
+    [["h", m.hn], ["a", m.an]].forEach(function (s) {
+      var x = sq[s[0]] || {}, p = [];
+      if (x.out && x.out.length) p.push("absents : " + x.out.join(", "));
+      if (x.back && x.back.length) p.push("de retour : " + x.back.join(", "));
+      h += "<p>" + esc(s[1]) + " — " + esc(p.length ? p.join(" · ") : "aucun titulaire absent ni de retour") + "</p>";
+    });
+    var seen = {}, vv = [];
+    (m.markets || []).forEach(function (x) { var r = E.sqVeto ? E.sqVeto(m, x) : null; if (r && !seen[x.id]) { seen[x.id] = 1; vv.push("« " + x.label + " » (" + r + ")"); } });
+    if (vv.length) h += '<p class="note"><b>Écarté des combinés (effectifs)</b> : ' + esc(vv.join(" ; ")) + "</p>";
+    return h + "</div>";
+  }
   var TRIG = { full: "trig_013ScxyLZHLpEH8d4qRJu7xc", live: "trig_01A6A7rh6WU4ayL396wHVkAX" };
   // WEB : version Android / site (GitHub Pages) — lecture seule, données lues dans data/app.json
   var WEB = !!window.__2ODDS_WEB__;
@@ -2502,9 +2549,9 @@ button.calday { cursor: pointer; }
       comboXb(h.legs.map(legKeyFrozen), h.prob, h.odds, h.legs.map(frozenAuto)) +
       '<div class="combo-foot">' + sub + "</div></section>";
   }
-  var RULES_TXT = "Règles : sélections cotées par 1xBet en priorité ; un match déjà joué dans un combiné n'est pas repris ; une sélection peut être écartée par l'analyse ; « pas de match nul » seulement à 85 % et entre deux équipes qui font peu de nuls ; probabilités corrigées par les leçons des résultats passés.";
+  var RULES_TXT = "Règles : sélections cotées par 1xBet en priorité ; un match déjà joué dans un combiné n'est pas repris ; une sélection peut être écartée par l'analyse ; elle l'est d'office dès 2 titulaires absents dans l'équipe dont elle dépend, ou 2 titulaires adverses de retour ; « pas de match nul » seulement à 85 % et entre deux équipes qui font peu de nuls ; probabilités corrigées par les leçons des résultats passés.";
   var SUB15 = "Vise une cote de 1,5 chez 1xBet. " + RULES_TXT + " ≈ : une des cotes est recalculée, la cote réelle peut différer un peu.";
-  var SUBPRO = "Les pronostics publiés par la presse et les analystes (Sports Mole, WhoScored, Opta Analyst, presse du pays) : une sélection est retenue si au moins 2 sources la conseillent (et au moins 2 sur 3 de celles qui se prononcent) et si le modèle ne la contredit pas (au moins 55\u00a0%). Matchs différents des combinés 1,5 et 2, cote visée entre 2 et 3. " + "Les vetos de l'analyse et les leçons des résultats passés s'appliquent aussi.";
+  var SUBPRO = "Les pronostics publiés par la presse et les analystes (Sports Mole, WhoScored, Opta Analyst, presse du pays) : une sélection est retenue si au moins 2 sources la conseillent (et au moins 2 sur 3 de celles qui se prononcent), si le modèle ne la contredit pas (au moins 60\u00a0%) et si 1xBet la cote. Matchs différents des combinés 1,5 et 2, cote visée entre 2 et 3. " + "Les vetos de l'analyse et des effectifs, et les leçons des résultats passés s'appliquent aussi.";
   var SUB2 = "Deux sélections au plus, différentes du combiné sûr. À cote 2, un combiné bien construit perd encore environ une fois sur deux : l'objectif est de gagner sur la durée, pas chaque jour. " + RULES_TXT;
   function valueList(c) {
     var now = Date.now(), rows = [], at = null, n = 0;
@@ -2672,7 +2719,7 @@ button.calday { cursor: pointer; }
         (g2.n ? g2.won + " combiné" + (g2.won > 1 ? "s" : "") + " gagné" + (g2.won > 1 ? "s" : "") + " sur " + g2.n : "aucun combiné terminé") + "</b><br><span>" +
         (g2.xn ? "Résultat aux cotes 1xBet : " + (g2.pl >= 0 ? "+" : "−") + dec(Math.abs(g2.pl), 2) + " pour 1 misé sur chacun (" + evPct(g2.pl / g2.xn) + " par mise). " : "") +
         (g2.none ? g2.none + " combiné" + (g2.none > 1 ? "s" : "") + " non proposé" + (g2.none > 1 ? "s" : "") + " faute de sélection valable. " : "") +
-        "Règles : un match ne sert qu'une fois, veto de l'analyse, « pas de nul » durci, 2 sélections au plus pour la cote 2 et leçons des résultats passés. Il faudra quelques semaines pour juger.</span></span></div></section>";
+        "Règles : un match ne sert qu'une fois, veto de l'analyse et des effectifs (depuis le 28 octobre), « pas de nul » durci, 2 sélections au plus pour la cote 2 et leçons des résultats passés. Il faudra quelques semaines pour juger.</span></span></div></section>";
     }
     html += learnHTML(state.meta && state.meta.learn);
     var xbN = 0, xbPL = 0;
@@ -2818,6 +2865,7 @@ button.calday { cursor: pointer; }
     if (m.note) {
       h += '<section class="card notebox"><h3>Infos d\'avant-match</h3>' + (m.note.txt ? "<p>" + esc(m.note.txt) + "</p>" : "") +
         (m.note.abs && m.note.abs.length ? '<div class="abs">' + m.note.abs.map(function (a) { return "<span>" + esc(a) + "</span>"; }).join("") + "</div>" : "") +
+        (m.note.sq ? sqHTML(m) : "") +
         (m.note.adj ? '<p class="note">Pris en compte : buts attendus ajustés (' + dec(m.note.adj[0], 2) + " / " + dec(m.note.adj[1], 2) + ").</p>" : "") +
         (m.note.veto ? '<p class="note"><b>Écarté des combinés par l\'analyse</b>' + (m.note.vetoWhy ? " : " + esc(m.note.vetoWhy) : "") + "</p>" : "") +
         (m.note.src ? '<p class="src">Source : ' + esc(m.note.src) + "</p>" : "") + "</section>";
