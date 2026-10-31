@@ -1,0 +1,39 @@
+name: feeds
+# Chaque jour vers 6 h 35 (heure de Douala) : résultats et calendrier des championnats ajoutés (ESPN, sans clé)
+on:
+  schedule:
+    - cron: "35 5 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["tools/feeds.py", ".github/workflows/feeds.yml"]
+permissions:
+  contents: write
+concurrency:
+  group: feeds
+  cancel-in-progress: false
+jobs:
+  feeds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Branche feeds (données des jours précédents)
+        run: |
+          git fetch origin feeds:feeds --depth 1 || true
+          mkdir -p out
+          if git rev-parse --verify feeds >/dev/null 2>&1; then git --work-tree=out checkout feeds -- feeds || true; fi
+          ls -la out/feeds || true
+      - name: Récupération ESPN
+        run: python3 tools/feeds.py out/feeds
+      - name: Publication sur la branche feeds
+        run: |
+          cd out
+          git init -q -b feeds
+          git config user.name "2odds-feeds"
+          git config user.email "2odds-feeds@users.noreply.github.com"
+          git add feeds
+          git commit -q -m "feeds $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" feeds:feeds
