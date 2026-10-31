@@ -107,55 +107,55 @@ def parse(data, teams, events):
                                  stats(hh, "h") if state == "post" else None, stats(aa, "a") if state == "post" else None]
 
 
-MODE = []  # format d'URL qui marche (trouvé au premier appel) : (jours par requête, suffixe)
-TRY = [(31, "&limit=500"), (31, "&limit=200"), (31, ""), (7, "&limit=100"), (7, ""), (1, "")]
+def cal_dates(data):
+    out = set()
+    for L in (data or {}).get("leagues") or []:
+        for c in L.get("calendar") or []:
+            v = c if isinstance(c, str) else (c.get("startDate") or c.get("value") or "")
+            if isinstance(v, str) and len(v) >= 10:
+                out.add(v[:10])
+    return out
 
 
-def chunks(a, b, days):
-    a, b = dt.date.fromisoformat(a), dt.date.fromisoformat(b)
-    if days >= 28:
-        yield from months(a.isoformat(), b.isoformat())
-        return
-    cur = a
-    while cur <= b:
-        yield cur, min(cur + dt.timedelta(days=days - 1), b)
-        cur += dt.timedelta(days=days)
+def day_url(lg, d):
+    return f"{BASE}{lg}/scoreboard?dates={d.replace('-', '')}"
 
 
-def url_for(lg, x, y, suf):
-    d = f"{x:%Y%m%d}" if x == y else f"{x:%Y%m%d}-{y:%Y%m%d}"
-    return f"{BASE}{lg}/scoreboard?dates={d}{suf}"
-
-
-def probe(lg, a):
-    x = dt.date.fromisoformat(a) + dt.timedelta(days=40)
-    for days, suf in TRY:
-        y = x + dt.timedelta(days=days - 1)
-        data = get(url_for(lg, x, y, suf), tries=1)
-        if data is not None and data.get("events") is not None:
-            log("format retenu :", days, "jour(s) par requête", suf or "(sans limit)", len(data.get("events") or []), "matchs")
-            MODE[:] = [days, suf]
-            return True
-    return False
-
-
-def season(lg, a, b):
+def season(lg, a, b, old=None, recent_only=False):
+    """Matchs de la saison [a, b] (jusqu'à J+14). ESPN n'accepte qu'un jour par requête : on lit d'abord le calendrier
+    (dates où il y a des matchs) puis on interroge seulement ces jours. old = fichier existant : mise à jour des jours récents."""
     teams, events = {}, {}
+    if old:
+        teams.update(old.get("teams") or {})
+        for e in old.get("events") or []:
+            events[e[0]] = e
     end = min(dt.date.fromisoformat(b), TODAY + dt.timedelta(days=14)).isoformat()
     if end < a:
         return None
-    if not MODE and not probe(lg, a):
-        log("aucun format d'URL ne marche pour", lg)
-        return None
-    days, suf = MODE
-    for x, y in chunks(a, end, days):
+    days = set()
+    mid = (dt.date.fromisoformat(a) + (dt.date.fromisoformat(end) - dt.date.fromisoformat(a)) / 2).isoformat()
+    for probe_day in sorted({a, mid, end, TODAY.isoformat() if a <= TODAY.isoformat() <= end else a}):
+        data = get(day_url(lg, probe_day))
+        parse(data, teams, events)
+        days |= cal_dates(data)
+        time.sleep(0.2)
+    days = {d for d in days if a <= d <= end}
+    if not days:  # pas de calendrier : tous les jours
+        x = dt.date.fromisoformat(a)
+        while x.isoformat() <= end:
+            days.add(x.isoformat()); x += dt.timedelta(days=1)
+        log(lg, "pas de calendrier ESPN : interrogation jour par jour")
+    if recent_only:
+        lo = (TODAY - dt.timedelta(days=5)).isoformat()
+        days = {d for d in days if d >= lo}
+    for d in sorted(days):
         if out_of_time():
             log("temps écoulé : arrêt", lg)
-            return None
-        parse(get(url_for(lg, x, y, suf)), teams, events)
-        time.sleep(0.25 if days > 1 else 0.1)
+            break
+        parse(get(day_url(lg, d)), teams, events)
+        time.sleep(0.15)
     return {"lg": lg, "from": a, "to": end, "fetched": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "teams": teams, "events": sorted(events.values(), key=lambda e: e[1] or "")}
+            "teams": teams, "events": sorted(events.values(), key=lambda e: e[1] or ""), "days": len(days)}
 
 
 def standings(lg):
@@ -176,11 +176,17 @@ def standings(lg):
 
 
 for code, (lg, a, b, pa, pb) in LEAGUES.items():   # 1) saisons en cours (prioritaires)
-    cur = season(lg, a, b)
+    fp = os.path.join(OUT, code + ".json")
+    try:
+        old = json.load(open(fp)) if os.path.exists(fp) else None
+    except Exception:
+        old = None
+    full = not old or len(old.get("events") or []) < 20 or old.get("from") != a or TODAY.weekday() == 0  # complet le lundi
+    cur = season(lg, a, b, None if full else old, recent_only=not full)
     if cur and cur["events"]:
         cur["standings"] = standings(lg)
         json.dump(cur, open(os.path.join(OUT, code + ".json"), "w"), ensure_ascii=False, separators=(",", ":"))
-        log(code, lg, len(cur["events"]), "matchs,", len(cur["teams"]), "équipes,", len(cur["standings"]), "lignes de classement")
+        log(code, lg, len(cur["events"]), "matchs,", len(cur["teams"]), "équipes,", len(cur["standings"]), "lignes de classement,", cur["days"], "jours lus", "(complet)" if full else "(jours récents)")
 for code, (lg, a, b, pa, pb) in LEAGUES.items():   # 2) saisons précédentes (une seule fois, pour les priors)
     prev = os.path.join(OUT, code + "_prev.json")
     try:
