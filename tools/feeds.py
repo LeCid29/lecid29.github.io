@@ -107,18 +107,53 @@ def parse(data, teams, events):
                                  stats(hh, "h") if state == "post" else None, stats(aa, "a") if state == "post" else None]
 
 
+MODE = []  # format d'URL qui marche (trouvé au premier appel) : (jours par requête, suffixe)
+TRY = [(31, "&limit=500"), (31, "&limit=200"), (31, ""), (7, "&limit=100"), (7, ""), (1, "")]
+
+
+def chunks(a, b, days):
+    a, b = dt.date.fromisoformat(a), dt.date.fromisoformat(b)
+    if days >= 28:
+        yield from months(a.isoformat(), b.isoformat())
+        return
+    cur = a
+    while cur <= b:
+        yield cur, min(cur + dt.timedelta(days=days - 1), b)
+        cur += dt.timedelta(days=days)
+
+
+def url_for(lg, x, y, suf):
+    d = f"{x:%Y%m%d}" if x == y else f"{x:%Y%m%d}-{y:%Y%m%d}"
+    return f"{BASE}{lg}/scoreboard?dates={d}{suf}"
+
+
+def probe(lg, a):
+    x = dt.date.fromisoformat(a) + dt.timedelta(days=40)
+    for days, suf in TRY:
+        y = x + dt.timedelta(days=days - 1)
+        data = get(url_for(lg, x, y, suf), tries=1)
+        if data is not None and data.get("events") is not None:
+            log("format retenu :", days, "jour(s) par requête", suf or "(sans limit)", len(data.get("events") or []), "matchs")
+            MODE[:] = [days, suf]
+            return True
+    return False
+
+
 def season(lg, a, b):
     teams, events = {}, {}
     end = min(dt.date.fromisoformat(b), TODAY + dt.timedelta(days=14)).isoformat()
     if end < a:
         return None
-    for x, y in months(a, end):
+    if not MODE and not probe(lg, a):
+        log("aucun format d'URL ne marche pour", lg)
+        return None
+    days, suf = MODE
+    for x, y in chunks(a, end, days):
         if out_of_time():
             log("temps écoulé : arrêt", lg)
             return None
-        url = f"{BASE}{lg}/scoreboard?dates={x:%Y%m%d}-{y:%Y%m%d}&limit=1000"
-        parse(get(url), teams, events)
-        time.sleep(0.3)
+        parse(get(url_for(lg, x, y, suf)), teams, events)
+        time.sleep(0.25 if days > 1 else 0.1)
     return {"lg": lg, "from": a, "to": end, "fetched": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "teams": teams, "events": sorted(events.values(), key=lambda e: e[1] or "")}
 
