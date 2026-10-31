@@ -20,17 +20,36 @@ os.makedirs(OUT, exist_ok=True)
 TODAY = dt.date.today()
 
 
-def get(url, tries=3):
+START = time.time()
+BUDGET_S = 11 * 60          # on s'arrête avant la limite du job (20 min) : ce qui est fait est publié
+LOG = []
+
+
+def log(*a):
+    line = " ".join(str(x) for x in a)
+    print(line, flush=True)
+    LOG.append(line)
+
+
+def get(url, tries=2):
+    err = None
     for k in range(tries):
+        t0 = time.time()
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (2odds feeds)"})
-            with urllib.request.urlopen(req, timeout=40) as r:
-                return json.loads(r.read().decode("utf-8"))
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)", "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                raw = r.read()
+            log(f"OK {time.time() - t0:.1f}s {len(raw)}o {url.split('/soccer/')[1][:70]}")
+            return json.loads(raw.decode("utf-8"))
         except Exception as e:
             err = e
-            time.sleep(2 + 3 * k)
-    print("ÉCHEC", url, err)
+            log(f"ERR {time.time() - t0:.1f}s {url.split('/soccer/')[1][:70]} {str(e)[:120]}")
+            time.sleep(2)
     return None
+
+
+def out_of_time():
+    return time.time() - START > BUDGET_S
 
 
 def months(a, b):
@@ -94,9 +113,12 @@ def season(lg, a, b):
     if end < a:
         return None
     for x, y in months(a, end):
+        if out_of_time():
+            log("temps écoulé : arrêt", lg)
+            return None
         url = f"{BASE}{lg}/scoreboard?dates={x:%Y%m%d}-{y:%Y%m%d}&limit=1000"
         parse(get(url), teams, events)
-        time.sleep(0.4)
+        time.sleep(0.3)
     return {"lg": lg, "from": a, "to": end, "fetched": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "teams": teams, "events": sorted(events.values(), key=lambda e: e[1] or "")}
 
@@ -118,15 +140,17 @@ def standings(lg):
     return rows
 
 
-for code, (lg, a, b, pa, pb) in LEAGUES.items():
+for code, (lg, a, b, pa, pb) in LEAGUES.items():   # 1) saisons en cours (prioritaires)
     cur = season(lg, a, b)
     if cur:
         cur["standings"] = standings(lg)
         json.dump(cur, open(os.path.join(OUT, code + ".json"), "w"), ensure_ascii=False, separators=(",", ":"))
-        print(code, lg, len(cur["events"]), "matchs,", len(cur["teams"]), "équipes,", len(cur["standings"]), "lignes de classement")
+        log(code, lg, len(cur["events"]), "matchs,", len(cur["teams"]), "équipes,", len(cur["standings"]), "lignes de classement")
+for code, (lg, a, b, pa, pb) in LEAGUES.items():   # 2) saisons précédentes (une seule fois, pour les priors)
     prev = os.path.join(OUT, code + "_prev.json")
-    if not os.path.exists(prev):
+    if not os.path.exists(prev) and not out_of_time():
         p = season(lg, pa, pb)
         if p:
             json.dump(p, open(prev, "w"), ensure_ascii=False, separators=(",", ":"))
-            print(code, "saison précédente :", len(p["events"]), "matchs")
+            log(code, "saison précédente :", len(p["events"]), "matchs")
+open(os.path.join(OUT, "_log.txt"), "w").write(dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ") + "\n" + "\n".join(LOG) + "\n")

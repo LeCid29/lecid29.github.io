@@ -27,8 +27,10 @@ jobs:
           if git rev-parse --verify feeds >/dev/null 2>&1; then git --work-tree=out checkout feeds -- feeds || true; fi
           ls -la out/feeds || true
       - name: Récupération ESPN
+        timeout-minutes: 13
         run: python3 tools/feeds.py out/feeds
       - name: Publication sur la branche feeds
+        if: always()
         run: |
           cd out
           git init -q -b feeds
