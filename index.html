@@ -999,18 +999,26 @@ button.calday { cursor: pointer; }
 
   function ord(n) { return n === 1 ? "1er" : n + "e"; }
 
+  // Lecture du classement par championnat : rel = nombre de places « zone rouge » (0 = pas de relégation au classement),
+  // top = places de tête et leur sens ; noTable = classement par poules (Argentine) : pas de lecture automatique.
+  var LCONF = {
+    primeira_liga: { rel: 3, top: 4, txt: "sur le podium européen" }, eredivisie: { rel: 3, top: 4, txt: "sur le podium européen" },
+    belgian_pro: { rel: 3, top: 6, txt: "dans les play-offs du titre" }, super_lig: { rel: 3, top: 4, txt: "sur le podium européen" },
+    saudi_pro: { rel: 3, top: 3, txt: "en place qualificative pour l'Asie" }, liga_mx: { rel: 0, top: 6, txt: "qualifié direct pour la Liguilla" },
+    brasileirao: { rel: 4, top: 6, txt: "en place pour la Copa Libertadores" }, liga_arg: { noTable: true }
+  };
   function stakeLeague(tab, h, a, H, A, compCode) {
-    var th = tab.map[h], ta = tab.map[a];
-    if (!th || !ta) return isDerby(h, a) ? "Derby" : "";
+    var th = tab.map[h], ta = tab.map[a], cf = LCONF[compCode] || { rel: 3, top: 4, txt: "sur le podium européen" };
+    if (!th || !ta || cf.noTable) return isDerby(h, a) ? "Derby" : "";
     var n = tab.n, gp = Math.max(th.gp, ta.gp), parts = [];
-    var relLine = compCode === "bundesliga" || compCode === "ligue_1" ? n - 2 : n - 2; // 3 derniers ~ zone rouge/barrage
+    var relLine = cf.rel ? n - cf.rel + 1 : n + 1; // Big 5 : 3 derniers ~ zone rouge/barrage
     if (isDerby(h, a)) parts.push("Derby");
-    if (th.rank <= 4 && ta.rank <= 4) parts.push("Choc du haut de tableau (" + ord(th.rank) + " contre " + ord(ta.rank) + ")");
+    if (th.rank <= cf.top && ta.rank <= cf.top) parts.push("Choc du haut de tableau (" + ord(th.rank) + " contre " + ord(ta.rank) + ")");
     else if (th.rank >= relLine && ta.rank >= relLine) parts.push("Duel de mal classés (" + ord(th.rank) + " contre " + ord(ta.rank) + ")");
     else {
       var desc = function (x, name) {
         if (x.rank === 1) return name + " est leader";
-        if (x.rank <= 4) return name + " est sur le podium européen (" + ord(x.rank) + ")";
+        if (x.rank <= cf.top) return name + " est " + cf.txt + " (" + ord(x.rank) + ")";
         if (x.rank >= relLine) return name + " est dans la zone rouge (" + ord(x.rank) + ")";
         return null;
       };
@@ -1149,10 +1157,12 @@ button.calday { cursor: pointer; }
   var S = isNode ? require("./sports.js") : root.PronoSports;
 
   var BIG5 = ["epl", "la_liga", "serie_a", "bundesliga", "ligue_1"];
-  var ORDER = ["epl", "la_liga", "serie_a", "bundesliga", "ligue_1", "champions_league", "mls", "nba", "nhl", "mlb", "tennis"];
-  var SHORT = { epl: "PL", la_liga: "Liga", serie_a: "Serie A", bundesliga: "Buli", ligue_1: "L1", champions_league: "LdC", mls: "MLS", nba: "NBA", nhl: "NHL", mlb: "MLB", tennis: "Tennis" };
-  var LABEL = { epl: "Premier League", la_liga: "LaLiga", serie_a: "Serie A", bundesliga: "Bundesliga", ligue_1: "Ligue 1", champions_league: "Ligue des champions", mls: "MLS", nba: "NBA", nhl: "NHL", mlb: "MLB", tennis: "Tennis" };
-  var SPORT_OF = { epl: "foot", la_liga: "foot", serie_a: "foot", bundesliga: "foot", ligue_1: "foot", champions_league: "foot", mls: "foot", nba: "basket", nhl: "hockey", mlb: "base", tennis: "tennis" };
+  var EXTRA = ["primeira_liga", "eredivisie", "belgian_pro", "super_lig", "saudi_pro", "liga_mx", "brasileirao", "liga_arg"]; // championnats ajoutés le 31 oct. 2026 (données ESPN, même modèle que le Big 5)
+  var MODEL = BIG5.concat(EXTRA);
+  var ORDER = ["epl", "la_liga", "serie_a", "bundesliga", "ligue_1", "champions_league", "primeira_liga", "eredivisie", "belgian_pro", "super_lig", "saudi_pro", "liga_mx", "brasileirao", "liga_arg", "mls", "nba", "nhl", "mlb", "tennis"];
+  var SHORT = { epl: "PL", la_liga: "Liga", serie_a: "Serie A", bundesliga: "Buli", ligue_1: "L1", champions_league: "LdC", primeira_liga: "Portugal", eredivisie: "Eredivisie", belgian_pro: "Belgique", super_lig: "Süper Lig", saudi_pro: "Saudi PL", liga_mx: "Liga MX", brasileirao: "Brésil", liga_arg: "Argentine", mls: "MLS", nba: "NBA", nhl: "NHL", mlb: "MLB", tennis: "Tennis" };
+  var LABEL = { epl: "Premier League", la_liga: "LaLiga", serie_a: "Serie A", bundesliga: "Bundesliga", ligue_1: "Ligue 1", champions_league: "Ligue des champions", primeira_liga: "Liga Portugal", eredivisie: "Eredivisie", belgian_pro: "Pro League (Belgique)", super_lig: "Süper Lig (Turquie)", saudi_pro: "Saudi Pro League", liga_mx: "Liga MX (Mexique)", brasileirao: "Brasileirão", liga_arg: "Liga Profesional (Argentine)", mls: "MLS", nba: "NBA", nhl: "NHL", mlb: "MLB", tennis: "Tennis" };
+  var SPORT_OF = { epl: "foot", la_liga: "foot", serie_a: "foot", bundesliga: "foot", ligue_1: "foot", champions_league: "foot", primeira_liga: "foot", eredivisie: "foot", belgian_pro: "foot", super_lig: "foot", saudi_pro: "foot", liga_mx: "foot", brasileirao: "foot", liga_arg: "foot", mls: "foot", nba: "basket", nhl: "hockey", mlb: "base", tennis: "tennis" };
 
   function pc(p) { return Math.round(p * 100) + "\u00a0%"; }
   function fr1(x) { return x.toFixed(1).replace(".", ","); }
@@ -1271,7 +1281,7 @@ button.calday { cursor: pointer; }
     opts = opts || {};
     var horizon = nowMs + (opts.days || 10) * 864e5, from = nowMs - 3 * 3600e3;
     var out = [], models = {};
-    BIG5.forEach(function (code) {
+    MODEL.forEach(function (code) {
       var d = docs[code]; if (!d) return;
       var doc = normBig5(d), L = PM.buildLeague(doc, new Date(nowMs).toISOString()), tab = S.table(doc.results);
       models[code] = { L: L, doc: doc };
@@ -2147,7 +2157,7 @@ button.calday { cursor: pointer; }
     return { T: T, n: n, cs: cs, opts: opts, outs: outs, full: sumInv <= 1, need: cs.reduce(function (a, c) { return a + up(T / c.o); }, 0) };
   }
 
-  var api = { BIG5: BIG5, ORDER: ORDER, SHORT: SHORT, LABEL: LABEL, SPORT_OF: SPORT_OF, buildMatches: buildMatches, dayCombos: dayCombos, liveGames: liveGames, liveCombo: liveCombo, topPicks: topPicks, legWhy: legWhy, formText: formText,
+  var api = { BIG5: BIG5, EXTRA: EXTRA, MODEL: MODEL, ORDER: ORDER, SHORT: SHORT, LABEL: LABEL, SPORT_OF: SPORT_OF, buildMatches: buildMatches, dayCombos: dayCombos, liveGames: liveGames, liveCombo: liveCombo, topPicks: topPicks, legWhy: legWhy, formText: formText,
     dayKey: dayKey, ruleOk: ruleOk, learnLog: learnLog, learnRows: learnRows, learnSummary: learnSummary, adjP: adjP, grpOf: grpOf, G_LBL: G_LBL, S_LBL: S_LBL, RULES: { v: RULES_V, value: VALUE_RULE, valMin: VAL_MIN, valMax: VAL_MAX, d12: D12_MIN, drawMax: DRAW_MAX, maxLegs2: MAX_LEGS[2] }, settleCombo: settleCombo, freezeDay: freezeDay, freezeValue: freezeValue, valuePicks: valuePicks, freezeLive: freezeLive, freezeLivePicks: freezeLivePicks, historyStats: historyStats, proOpinion: proOpinion, proWhy: proWhy, PRO: { lo: PRO_LO, hi: PRO_HI, minP: PRO_MIN_P, minSrc: PRO_MIN_SRC, share: PRO_SHARE, needXb: PRO_NEED_XB }, sqVeto: sqVeto, sideOf: sideOf, SQ_MIN: SQ_MIN, stakePlan: stakePlan, planReturn: planReturn, hedgePlan: hedgePlan, oppMarket: oppMarket, coverPlan: coverPlan, coverPlanN: coverPlanN };
   if (isNode) module.exports = api; else root.PronoEngine = api;
 })(this);
@@ -2177,7 +2187,7 @@ button.calday { cursor: pointer; }
   var WEB = !!window.__2ODDS_WEB__;
   var VIA = WEB ? " (dans la version claude.ai)" : "";
   var SPORTS = [["all", "Tous"], ["foot", "Football"], ["basket", "Basket"], ["tennis", "Tennis"], ["hockey", "Hockey"], ["base", "Baseball"]];
-  var FOOT = [["all", "Toutes"], ["epl", "Premier League"], ["la_liga", "LaLiga"], ["serie_a", "Serie A"], ["bundesliga", "Bundesliga"], ["ligue_1", "Ligue 1"], ["champions_league", "Ligue des champions"], ["mls", "MLS"]];
+  var FOOT = [["all", "Toutes"], ["epl", "Premier League"], ["la_liga", "LaLiga"], ["serie_a", "Serie A"], ["bundesliga", "Bundesliga"], ["ligue_1", "Ligue 1"], ["champions_league", "Ligue des champions"], ["primeira_liga", "Liga Portugal"], ["eredivisie", "Eredivisie"], ["belgian_pro", "Pro League (BEL)"], ["super_lig", "Süper Lig"], ["saudi_pro", "Saudi Pro League"], ["liga_mx", "Liga MX"], ["brasileirao", "Brasileirão"], ["liga_arg", "Liga Argentina"], ["mls", "MLS"]];
   var state = { docs: {}, live: null, meta: {}, history: [], odds: {}, oddsRO: false, oddsErr: "", sheetXb: false, sheetTg: false, renderLater: false, db: null, view: "combos", sport: "all", comp: "all", loaded: false, openKey: null, pending: {}, cache: null, mcp: null };
   var lastFocus = null;
   try { var sv = JSON.parse(localStorage.getItem("pb5-v2") || "{}"); if (sv.view) state.view = sv.view; if (sv.sport) state.sport = sv.sport; if (sv.comp) state.comp = sv.comp; } catch (e) {}
@@ -2810,6 +2820,7 @@ button.calday { cursor: pointer; }
   function footer() {
     return '<div class="foot"><details><summary>Comment sont calculés les pronostics</summary>' +
       "<p><b>Football Big 5</b> : notre modèle note l'attaque et la défense de chaque équipe à partir des résultats de la saison (en partant du niveau 2025-26), puis calcule les buts attendus et la probabilité de chaque score. Corners, cartons et fautes viennent des statistiques des derniers matchs ; pour les corners, l'écart d'une équipe à la moyenne du championnat est réduit de 60 %, car sur 2024-25 et 2025-26 le modèle s'y montrait trop sûr de lui (76 % annoncés là où 66 % passaient). L'avis de Sportradar sert de contrôle. Les probabilités de buts (plus/moins, les deux équipes marquent) sont recalées sur les résultats réels de 2024-25 et 2025-26, où le modèle s'était montré trop sûr de lui.</p>" +
+      "<p><b>Portugal, Pays-Bas, Belgique, Turquie, Arabie saoudite, Liga MX, Brésil, Argentine</b> (ajoutés le 31 oct. 2026) : même modèle que le Big 5, à partir des résultats d'ESPN (en partant du niveau de la saison précédente) ; pas d'avis Sportradar pour contrôler, et les cotes 1xBet sont relevées un jour sur deux.</p>" +
       "<p><b>Ligue des champions et MLS</b> : on part des probabilités 1N2 de Sportradar et on en déduit les buts attendus, donc les marchés de buts et les scores. <b>NBA, NHL, MLB</b> : probabilité de victoire Sportradar, puis totaux et handicaps estimés à partir des scores de la saison (moyenne de la ligue tant que l'échantillon est court). En NHL, la fin de match (prolongation, but dans la cage vide, égalisation gardien retiré) est calée sur 447 matchs de la saison 2025-26. <b>Tennis</b> : classement Elo par surface de Tennis Abstract.</p>" +
       "<p><b>Forme et enjeu</b> : la forme vient des 5 derniers résultats, l'enjeu du classement (titre, Europe, maintien, play-offs, séries). Pour les grands matchs, Claude ajoute des infos d'avant-match (blessés, suspendus, joueurs en forme) trouvées dans la presse ; une absence majeure confirmée ajuste légèrement les buts attendus.</p>" +
       "<p><b>Les plus sûrs</b> (fiche d'un match des 5 grands championnats) : les pronostics que le modèle donne à 85 % ou plus, parmi ceux qui ont réellement réussi plus de 85 % du temps dans ce cas sur 2024-25 et 2025-26 (3 485 matchs testés à l'aveugle) : favori ou nul 91,5 %, pas de match nul 90,9 %, moins de 4,5 buts 89,3 %, plus de 6,5 corners (ou la ligne équivalente du championnat) 89 %, moins de 5,5 cartons jaunes 86,7 %, plus de 2,5 cartons 85,6 %, plus de 1,5 but 85 %. La victoire sèche, plus/moins de 2,5 buts et « les deux équipes marquent » n'y figurent pas : le modèle les annonce rarement à 85 % et, dans ces cas, ils n'ont pas dépassé 80 % de réussite.</p>" +
