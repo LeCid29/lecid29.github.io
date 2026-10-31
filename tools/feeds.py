@@ -177,15 +177,19 @@ def standings(lg):
 
 for code, (lg, a, b, pa, pb) in LEAGUES.items():   # 1) saisons en cours (prioritaires)
     cur = season(lg, a, b)
-    if cur:
+    if cur and cur["events"]:
         cur["standings"] = standings(lg)
         json.dump(cur, open(os.path.join(OUT, code + ".json"), "w"), ensure_ascii=False, separators=(",", ":"))
         log(code, lg, len(cur["events"]), "matchs,", len(cur["teams"]), "équipes,", len(cur["standings"]), "lignes de classement")
 for code, (lg, a, b, pa, pb) in LEAGUES.items():   # 2) saisons précédentes (une seule fois, pour les priors)
     prev = os.path.join(OUT, code + "_prev.json")
-    if not os.path.exists(prev) and not out_of_time():
+    try:
+        have = len(json.load(open(prev))["events"]) if os.path.exists(prev) else 0
+    except Exception:
+        have = 0
+    if have < 50 and not out_of_time():   # absente ou ratée (moins de 50 matchs) : on la refait
         p = season(lg, pa, pb)
-        if p:
+        if p and len(p["events"]) >= 50:
             json.dump(p, open(prev, "w"), ensure_ascii=False, separators=(",", ":"))
             log(code, "saison précédente :", len(p["events"]), "matchs")
 open(os.path.join(OUT, "_log.txt"), "w").write(dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ") + "\n" + "\n".join(LOG) + "\n")
