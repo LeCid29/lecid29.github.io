@@ -1446,7 +1446,10 @@ button.calday { cursor: pointer; }
     if (rule.t === "btts") return rule.v ? "btts" : "nbtts";
     return rule.t; // hcp, sc, set1
   }
-  function learnKey(r) { return r.c + "|" + (r.f ? String(r.f).slice(0, 8) : r.h + "-" + r.a + "-" + String(r.t).slice(0, 10)) + "|" + r.m; }
+  // n° de match comparable : 8 premiers caractères (Sportradar, y compris les UUID NBA/NHL/MLB) ; n° ESPN (chiffres, 9 et plus) en entier,
+  // sinon deux matchs ESPN voisins (401878952 et 401878956) se confondent (bug vu le 1er nov. 2026)
+  function idKey(f) { f = String(f || ""); return /^[0-9]{9,}$/.test(f) ? f : f.slice(0, 8); }
+  function learnKey(r) { return r.c + "|" + (r.f ? idKey(r.f) : r.h + "-" + r.a + "-" + String(r.t).slice(0, 10)) + "|" + r.m; }
   // journal du jour : pronostics des 36 h à venir dont la cote 1xBet est connue, plus « Les deux équipes marquent » / « Une équipe ne marque pas » en foot
   // même sans cote (règles v4) ; probabilité brute du modèle, 40 % à 95 %
   function learnLog(matches, nowMs) {
@@ -1841,11 +1844,11 @@ button.calday { cursor: pointer; }
     return ((d && d.results) || []).map(function (r) { return Array.isArray(r) ? { d: r[0], h: r[1], a: r[2], hg: r[3], ag: r[4], id: r[5] || "" } : r; });
   }
   function findResult(leg, docs) {
-    var rows = rowsOf(docs[leg.comp]), t = Date.parse(leg.t), fid = leg.fid ? String(leg.fid).slice(0, 8) : "", best = null, bd = 1e18;
+    var rows = rowsOf(docs[leg.comp]), t = Date.parse(leg.t), fid = leg.fid ? idKey(leg.fid) : "", best = null, bd = 1e18;
     var big5 = BIG5.indexOf(leg.comp) >= 0;
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
-      if (fid && r.id && String(r.id).slice(0, 8) === fid) return r;
+      if (fid && r.id && idKey(r.id) === fid) return r;
       if (r.h !== leg.h || r.a !== leg.a) continue;
       var dd = Math.abs(Date.parse(r.d + "T12:00:00Z") - t);
       if (big5 && dd <= 4 * 864e5) return r; // une seule affiche par saison dans les championnats
