@@ -1,7 +1,7 @@
 """Récupère chaque jour les résultats, le calendrier et les classements de championnats de foot
 (API publique d'ESPN, sans clé) et les écrit en JSON compact dans feeds/ (branche « feeds »).
 Lancé par .github/workflows/feeds.yml. Aucune clé ni mot de passe ici : ce dépôt est public."""
-import json, os, sys, time, datetime as dt, urllib.request
+import json, os, re, sys, time, datetime as dt, urllib.request
 
 LEAGUES = {  # code de l'appli : (championnat ESPN, début saison en cours, fin, début saison précédente, fin)
     "primeira_liga": ("por.1", "2026-07-01", "2027-06-30", "2025-07-01", "2026-06-30"),
@@ -71,6 +71,16 @@ def stat(comp, name):
     return None
 
 
+def first_half(d):
+    """True si l'action a eu lieu en 1re mi-temps (temps additionnel compris : « 45'+2' »), False après, None si inconnu."""
+    clk = d.get("clock") or {}
+    dv = str(clk.get("displayValue") or "")
+    m = re.match(r"\s*(\d+)", dv)
+    if m:
+        return int(m.group(1)) <= 45
+    return None
+
+
 def parse(data, teams, events):
     for ev in (data or {}).get("events", []):
         try:
@@ -90,18 +100,39 @@ def parse(data, teams, events):
             except Exception:
                 return None
         cards = {"h": [0, 0], "a": [0, 0]}
+        ht = {"h": [0, 0], "a": [0, 0]}  # 1re mi-temps : [buts, cartons jaunes] (règles v5 de l'appli, paris « mi-temps »)
+        g_ok = y_ok = True               # False si une action n'a pas de minute lisible (ou but contre son camp avant la pause)
         hid = str((hh.get("team") or {}).get("id"))
         for d in c.get("details") or []:
             side = "h" if str((d.get("team") or {}).get("id")) == hid else "a"
+            first = first_half(d)
             if d.get("redCard"):
                 cards[side][1] += 1
             elif d.get("yellowCard"):
                 cards[side][0] += 1
+                if first is None:
+                    y_ok = False
+                elif first:
+                    ht[side][1] += 1
+            if d.get("scoringPlay"):
+                if first is None or (first and d.get("ownGoal")):
+                    g_ok = False
+                elif first:
+                    ht[side][0] += 1
+        def line1(x):  # buts de la 1re période donnés par ESPN (plus sûr que les actions de jeu)
+            ls = x.get("linescores") or []
+            try:
+                return int(float(ls[0].get("value"))) if ls else None
+            except Exception:
+                return None
+        lh, la = line1(hh), line1(aa)
+        if lh is not None and la is not None:
+            ht["h"][0], ht["a"][0], g_ok = lh, la, True
         def stats(x, side):
             co, fo = stat(x, "wonCorners"), stat(x, "foulsCommitted")
             if co is None and fo is None:
                 return None
-            return [co, fo, cards[side][0], cards[side][1]]
+            return [co, fo, cards[side][0], cards[side][1], ht[side][0] if g_ok else None, ht[side][1] if y_ok else None]
         events[str(ev["id"])] = [str(ev["id"]), ev.get("date") or c.get("date"), state, name,
                                  hid, str((aa.get("team") or {}).get("id")), sc(hh), sc(aa),
                                  stats(hh, "h") if state == "post" else None, stats(aa, "a") if state == "post" else None]
